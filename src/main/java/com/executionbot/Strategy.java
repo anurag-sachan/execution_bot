@@ -80,10 +80,10 @@ final class Strategy {
                 .append(", 30m: ").append(TIME_FORMAT.format(windowTime)).append('\n')
                 .append("---------------\n");
         report.append(String.format(Locale.ROOT,
-                "LONG 1H_entry_level=%.2f 30m_touch_level=%.2f%n"
-                        + "SHORT 1H_entry_level=%.2f 30m_touch_level=%.2f%n",
-                hour.open() - LONG_LEVEL_OFFSET, previous.high() - 360,
-                hour.open() + SHORT_LEVEL_OFFSET, previous.low() + 360));
+                "🔴 SHORT ↓ 1H_entry_level=%.2f 30m_touch_level=%.2f%n"
+                        + "🟢 LONG  ↑ 1H_entry_level=%.2f 30m_touch_level=%.2f%n",
+                hour.open() + SHORT_LEVEL_OFFSET, previous.low() + 360,
+                hour.open() - LONG_LEVEL_OFFSET, previous.high() - 360));
         report.append("---------------\n");
         for (Side side : Side.values()) {
             Rule rule = rule(side, windowTime);
@@ -102,8 +102,9 @@ final class Strategy {
             double targetPrice = side == Side.LONG
                     ? executionEntry + targetDistance : executionEntry - targetDistance;
             report.append(String.format(Locale.ROOT,
-                    "%s: SL=%.2f TP=%.2f (spread-adjusted; stop=%d target=%d)%s%n",
-                    side, stopPrice, targetPrice, rule.stop, rule.target,
+                    "%s %s: SL=%.2f TP=%.2f (spread-adjusted; stop=%d target=%d)%s%n",
+                    side == Side.SHORT ? "🔴 ↓" : "🟢 ↑", side,
+                    stopPrice, targetPrice, rule.stop, rule.target,
                     exclusion.isEmpty() ? "" : " EXCLUDED: " + exclusion));
         }
         return report.toString();

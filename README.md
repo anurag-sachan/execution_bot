@@ -11,10 +11,9 @@ candles, requires touch and entry on different 1-minute candles, allows one open
 position, applies the IST weekday/time/day-of-month filters, the 500-point round-number
 filter, 10% risk slots, and broker-mode `SL + spread` sizing.
 
-MatchTrader OHLC snapshots are stored in `data/market_snapshots.csv`. On an API
-failure, the bot continues from that cache instead of failing immediately. The cache is
-made from broker 1-minute OHLC history and bucketed into 1-minute, 30-minute, and
-1-hour candles. Keep the process running so the local cache remains current.
+Every polling cycle fetches fresh BID candles directly from MatchTrader using its
+`M1`, `M30`, and `H1` candle API intervals. No market data is stored locally and
+no candles are constructed from lower timeframes.
 Broker state is synchronized to `data/OpenPositions.csv`, and `data/database.txt` stores
 the risk cap and the last submitted signal. Requests retry with backoff and refresh the
 MatchTrader login when authentication expires.

@@ -16,7 +16,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.TreeMap;
 
 final class MatchTrader {
     enum PendingOrderType {
@@ -132,50 +131,47 @@ final class MatchTrader {
                 String.format(Locale.ROOT, "{\"id\":\"%s\"}", escape(orderId)));
     }
 
-    MarketSnapshot snapshot() throws Exception {
-        long now = Instant.now().getEpochSecond();
+    List<Candle> candles(String interval, int amount) throws Exception {
         String symbol = URLEncoder.encode(config.symbol(), StandardCharsets.UTF_8);
-        String path = "/api/trading-view/history?symbol=" + symbol
-                + "&resolution=1&from=" + (now - 300L * 60L) + "&to=" + now
-                + "&shouldRetrieveOnlyFromCache=true&countback=300";
+        String path = "/candles?symbol=" + symbol + "&interval=" + interval
+                + "&candleSide=BID&amount=" + amount;
         JsonNode root = request("market-data-api", "GET", path, null);
-        JsonNode timestamps = root.path("t");
-        JsonNode opens = root.path("o");
-        JsonNode highs = root.path("h");
-        JsonNode lows = root.path("l");
-        JsonNode closes = root.path("c");
-        if (!timestamps.isArray() || !opens.isArray() || !highs.isArray()
-                || !lows.isArray() || !closes.isArray() || timestamps.isEmpty()) {
-            throw new IOException("MatchTrader returned no OHLC history for " + config.symbol());
+        JsonNode rows = root.isArray() ? root : root.path("candles");
+        if (!rows.isArray() || rows.isEmpty()) {
+            throw new IOException("MatchTrader returned no " + interval + " candles for "
+                    + config.symbol());
         }
-        TreeMap<Long, Candle> candles = new TreeMap<>();
-        for (int i = 0; i < timestamps.size(); i++) {
-            long openTime = timestamps.get(i).asLong() * 1_000L;
-            candles.put(openTime, new Candle(openTime, openTime + 60_000L,
-                    opens.get(i).asDouble(), highs.get(i).asDouble(),
-                    lows.get(i).asDouble(), closes.get(i).asDouble()));
+        List<Candle> result = new ArrayList<>();
+        long duration = switch (interval) {
+            case "M1" -> 60_000L;
+            case "M30" -> 30 * 60_000L;
+            case "H1" -> 60 * 60_000L;
+            default -> throw new IllegalArgumentException("Unsupported candle interval " + interval);
+        };
+        for (JsonNode row : rows) {
+            long openTime = longValue(row, "timestamp", "time", "openTime", "t");
+            if (openTime < 10_000_000_000L) openTime *= 1_000L;
+            result.add(new Candle(openTime, openTime + duration,
+                    value(row, "open", "o"), value(row, "high", "h"),
+                    value(row, "low", "l"), value(row, "close", "c")));
         }
-        Candle latest = candles.lastEntry().getValue();
-        return new MarketSnapshot(Instant.now().toEpochMilli(), latest,
-                aggregate(candles, 30), aggregate(candles, 60));
+        return result.stream().sorted(java.util.Comparator.comparingLong(Candle::openTime)).toList();
     }
 
-    private static Candle aggregate(TreeMap<Long, Candle> candles, int minutes) throws IOException {
-        long bucket = Math.floorDiv(candles.lastKey(), minutes * 60_000L)
-                * minutes * 60_000L;
-        Candle result = null;
-        for (Candle candle : candles.tailMap(bucket).values()) {
-            result = result == null
-                    ? new Candle(bucket, bucket + minutes * 60_000L, candle.open(),
-                            candle.high(), candle.low(), candle.close())
-                    : new Candle(bucket, bucket + minutes * 60_000L, result.open(),
-                            Math.max(result.high(), candle.high()),
-                            Math.min(result.low(), candle.low()), candle.close());
+    private static double value(JsonNode row, String... names) throws IOException {
+        for (String name : names) {
+            JsonNode field = row.get(name);
+            if (field != null && field.isNumber()) return field.asDouble();
         }
-        if (result == null) {
-            throw new IOException("MatchTrader history did not contain the current candle");
+        throw new IOException("MatchTrader candle is missing field " + String.join("/", names));
+    }
+
+    private static long longValue(JsonNode row, String... names) throws IOException {
+        for (String name : names) {
+            JsonNode field = row.get(name);
+            if (field != null && field.isNumber()) return field.asLong();
         }
-        return result;
+        throw new IOException("MatchTrader candle is missing field " + String.join("/", names));
     }
 
     private JsonNode openPositions() throws Exception {
@@ -274,7 +270,4 @@ final class MatchTrader {
     private static String escape(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
-}
-
-record MarketSnapshot(long observedAt, Candle oneMinute, Candle thirtyMinute, Candle oneHour) {
 }

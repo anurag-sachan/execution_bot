@@ -19,8 +19,6 @@ public final class Main {
         BotConfig config = BotConfig.fromEnvironment();
         config = config.withRiskCap(Integer.parseInt(
                 state.read("riskCap", Integer.toString(config.riskCap()))));
-        MarketDataStore marketData = new MarketDataStore(
-                Path.of("data", "market_snapshots.csv"), config.marketCacheMinutes());
         MatchTrader broker = new MatchTrader(config);
         Strategy strategy = new Strategy(config);
 
@@ -28,7 +26,7 @@ public final class Main {
                 ZoneId.of("Asia/Kolkata"));
         while (true) {
             try {
-                runCycle(config, state, marketData, broker, strategy);
+                runCycle(config, state, broker, strategy);
             } catch (Exception error) {
                 System.err.println("Cycle failed: " + error.getMessage());
             }
@@ -37,7 +35,7 @@ public final class Main {
         }
     }
 
-    private static void runCycle(BotConfig config, LocalState state, MarketDataStore marketData,
+    private static void runCycle(BotConfig config, LocalState state,
                                    MatchTrader broker, Strategy strategy) throws Exception {
         broker.syncPositions();
         if (broker.hasOpenPosition(config.symbol())) {
@@ -46,20 +44,10 @@ public final class Main {
             return;
         }
 
-        try {
-            marketData.append(broker.snapshot());
-        } catch (IOException | InterruptedException marketFailure) {
-            System.err.println("MatchTrader market data unavailable; using local market cache: "
-                    + marketFailure.getMessage());
-        }
-        if (marketData.latestObservedAt() < Instant.now().minusSeconds(120).toEpochMilli()) {
-            System.err.println("Market cache is stale; no order will be submitted.");
-            return;
-        }
         long now = Instant.now().toEpochMilli();
-        List<Candle> minutes = marketData.candles(1);
-        List<Candle> halfHours = marketData.candles(30);
-        List<Candle> hours = marketData.candles(60);
+        List<Candle> minutes = broker.candles("M1", 60);
+        List<Candle> halfHours = broker.candles("M30", 3);
+        List<Candle> hours = broker.candles("H1", 2);
         long windowStart = strategy.currentWindowStart(halfHours, now);
         if (windowStart != lastReportedWindowStart) {
             System.out.print(strategy.currentWindowReport(halfHours, hours, now));
