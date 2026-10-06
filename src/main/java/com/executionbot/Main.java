@@ -50,7 +50,7 @@ public final class Main {
         List<Candle> hours = broker.candles("H1", 2);
         long windowStart = strategy.currentWindowStart(halfHours, now);
         if (windowStart != lastReportedWindowStart) {
-            System.out.print(strategy.currentWindowReport(halfHours, hours, now));
+            System.out.print(strategy.currentWindowReport(minutes, halfHours, hours, now));
             lastReportedWindowStart = windowStart;
         }
 
