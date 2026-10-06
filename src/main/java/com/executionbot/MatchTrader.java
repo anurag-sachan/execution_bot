@@ -96,10 +96,12 @@ final class MatchTrader {
         }
         double stopDistance = signal.stopPoints() + config.spreadPoints();
         double targetDistance = stopDistance * signal.targetPoints() / signal.stopPoints();
+        double executionPrice = signal.side() == Side.LONG
+                ? price + config.spreadPoints() : price;
         double stopPrice = signal.side() == Side.LONG
-                ? price - stopDistance : price + stopDistance;
+                ? executionPrice - stopDistance : executionPrice + stopDistance;
         double targetPrice = signal.side() == Side.LONG
-                ? price + targetDistance : price - targetDistance;
+                ? executionPrice + targetDistance : executionPrice - targetDistance;
         double risk = config.riskCap() * signal.riskMultiplier();
         double volume = Math.min(config.maxLots(),
                 risk / (stopDistance * config.pointValuePerLot()));
@@ -113,7 +115,7 @@ final class MatchTrader {
                         "{\"orderSide\":\"%s\",\"slPrice\":%.8f,\"tpPrice\":%.8f,"
                                 + "\"instrument\":\"%s\",\"volume\":%.8f,\"type\":\"%s\","
                                 + "\"price\":%.8f,\"source\":\"Advanced view\"}",
-                        side, stopPrice, targetPrice, config.symbol(), volume, type.name(), price));
+                        side, stopPrice, targetPrice, config.symbol(), volume, type.name(), executionPrice));
         String orderId = created.path("id").asText(
                 created.path("orderId").asText(""));
         if (orderId.isBlank()) {

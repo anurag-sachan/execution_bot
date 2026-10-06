@@ -9,6 +9,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 public final class Main {
+    private static long lastReportedWindowStart = Long.MIN_VALUE;
+
     private Main() {
     }
 
@@ -58,6 +60,11 @@ public final class Main {
         List<Candle> minutes = marketData.candles(1);
         List<Candle> halfHours = marketData.candles(30);
         List<Candle> hours = marketData.candles(60);
+        long windowStart = strategy.currentWindowStart(halfHours, now);
+        if (windowStart != lastReportedWindowStart) {
+            System.out.print(strategy.currentWindowReport(halfHours, hours, now));
+            lastReportedWindowStart = windowStart;
+        }
 
         String pendingOrderId = state.read("pendingOrderId", "");
         long pendingSetupEnd = Long.parseLong(state.read("pendingSetupEnd", "0"));

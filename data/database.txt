@@ -1,2 +1,2 @@
 # Runtime values are intentionally plain text, matching algo/data/database.txt.
-riskCap:4000
+riskCap:1000
