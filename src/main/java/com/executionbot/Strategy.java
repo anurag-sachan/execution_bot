@@ -50,15 +50,17 @@ final class Strategy {
         Candle hour = hours.stream().filter(c -> c.openTime() == hourStart).findFirst().orElse(null);
         ZonedDateTime windowTime = ZonedDateTime.ofInstant(
                 Instant.ofEpochMilli(window.openTime()), IST);
-        boolean excludedDate = Set.of(10, 14, 15).contains(windowTime.getDayOfMonth());
-        boolean ignoredDay = !BEST_DAYS.contains(Side.LONG, windowTime.getDayOfWeek());
+        ZonedDateTime currentTime = ZonedDateTime.ofInstant(
+                Instant.ofEpochMilli(observedAt), IST);
+        boolean excludedDate = Set.of(10, 14, 15).contains(currentTime.getDayOfMonth());
+        boolean ignoredDay = !BEST_DAYS.contains(Side.LONG, currentTime.getDayOfWeek());
         double risk = config.riskCap() * (reducedRisk(windowTime) ? 0.1 : 1.0);
         StringBuilder report = new StringBuilder();
         report.append(String.format(Locale.ROOT,
                 "%n---------- %s%s, %s%s, %s (IST) [$%.2f] ----------%n",
-                DATE_FORMAT.format(windowTime), excludedDate ? " (EXCLUDED)" : "",
-                windowTime.getDayOfWeek(), ignoredDay ? " (IGNORED)" : "",
-                TIME_FORMAT.format(windowTime), risk));
+                DATE_FORMAT.format(currentTime), excludedDate ? " (EXCLUDED)" : "",
+                currentTime.getDayOfWeek(), ignoredDay ? " (IGNORED)" : "",
+                TIME_FORMAT.format(currentTime), risk));
         if (hour == null) {
             report.append("current windows -> 1hr: unavailable, 30m: ")
                     .append(TIME_FORMAT.format(windowTime)).append('\n');

@@ -9,7 +9,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 public final class Main {
-    private static long lastReportedWindowStart = Long.MIN_VALUE;
+    private static long lastReportedMinute = Long.MIN_VALUE;
 
     private Main() {
     }
@@ -48,10 +48,10 @@ public final class Main {
         List<Candle> minutes = broker.candles("M1", 60);
         List<Candle> halfHours = broker.candles("M30", 3);
         List<Candle> hours = broker.candles("H1", 2);
-        long windowStart = strategy.currentWindowStart(halfHours, now);
-        if (windowStart != lastReportedWindowStart) {
+        long currentMinute = Math.floorDiv(now, 60_000L);
+        if (currentMinute != lastReportedMinute) {
             System.out.print(strategy.currentWindowReport(minutes, halfHours, hours, now));
-            lastReportedWindowStart = windowStart;
+            lastReportedMinute = currentMinute;
         }
 
         String pendingOrderId = state.read("pendingOrderId", "");
