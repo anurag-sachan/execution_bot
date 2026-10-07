@@ -106,7 +106,7 @@ final class Strategy {
             double targetPrice = side == Side.LONG
                     ? executionEntry + targetDistance : executionEntry - targetDistance;
             report.append(String.format(Locale.ROOT,
-                    "%s %s: MatchTrader_entry_price=%.2f SL=%.2f TP=%.2f "
+                    "%s %s: B/A_ENTRY_PRICE=%.2f SL=%.2f TP=%.2f "
                             + "stop=%.0f target=%.2f (spread:%.0f)%s%n",
                     side == Side.SHORT ? "🔴 ↓" : "🟢 ↑", side,
                     executionEntry, stopPrice, targetPrice, stopDistance, targetDistance,
