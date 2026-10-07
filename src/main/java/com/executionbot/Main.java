@@ -60,7 +60,7 @@ public final class Main {
             if (now >= pendingSetupEnd) {
                 broker.cancelPendingOrder(pendingOrderId);
                 clearPendingOrder(state);
-                System.out.println("Canceled pending STOP order after setup window closed.");
+                System.out.println("◇ Canceled pending STOP order after setup window closed.");
             }
             return;
         }

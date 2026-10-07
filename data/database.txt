@@ -1,2 +1,4 @@
-# Runtime values are intentionally plain text, matching algo/data/database.txt.
+pendingSignal:
+pendingSetupEnd:0
+pendingOrderId:
 riskCap:1000

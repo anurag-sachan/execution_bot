@@ -106,9 +106,11 @@ final class Strategy {
             double targetPrice = side == Side.LONG
                     ? executionEntry + targetDistance : executionEntry - targetDistance;
             report.append(String.format(Locale.ROOT,
-                    "%s %s: SL=%.2f TP=%.2f (spread-adjusted; stop=%d target=%d)%s%n",
+                    "%s %s: MatchTrader_entry_price=%.2f SL=%.2f TP=%.2f "
+                            + "stop=%.0f target=%.2f (spread:%.0f)%s%n",
                     side == Side.SHORT ? "🔴 ↓" : "🟢 ↑", side,
-                    stopPrice, targetPrice, rule.stop, rule.target,
+                    executionEntry, stopPrice, targetPrice, stopDistance, targetDistance,
+                    config.spreadPoints(),
                     exclusion.isEmpty() ? "" : " EXCLUDED: " + exclusion));
         }
         return report.toString();
@@ -167,10 +169,18 @@ final class Strategy {
         if (hour == null) return null;
 
         List<Signal> candidates = new ArrayList<>();
-        addPendingCandidate(candidates, Side.LONG, setup, previous.high() - 360,
-                hour.open() - LONG_LEVEL_OFFSET, minutes);
-        addPendingCandidate(candidates, Side.SHORT, setup, previous.low() + 360,
-                hour.open() + SHORT_LEVEL_OFFSET, minutes);
+        double longTouchLevel = previous.high() - 360;
+        double longEntryLevel = hour.open() - LONG_LEVEL_OFFSET;
+        if (longTouchLevel < longEntryLevel) {
+            addPendingCandidate(candidates, Side.LONG, setup, longTouchLevel,
+                    longEntryLevel, minutes);
+        }
+        double shortTouchLevel = previous.low() + 360;
+        double shortEntryLevel = hour.open() + SHORT_LEVEL_OFFSET;
+        if (shortTouchLevel > shortEntryLevel) {
+            addPendingCandidate(candidates, Side.SHORT, setup, shortTouchLevel,
+                    shortEntryLevel, minutes);
+        }
         return candidates.stream()
                 .max(java.util.Comparator.comparingLong(Signal::touchTime)).orElse(null);
     }
@@ -178,19 +188,21 @@ final class Strategy {
     private void addPendingCandidate(List<Signal> out, Side side, Candle setup,
                                      double touch, double entry, List<Candle> minutes) {
         if (side == Side.LONG ? touch >= entry : touch <= entry) return;
-        Candle latest = minutes.get(minutes.size() - 1);
-        boolean touched = false;
-        for (Candle candle : minutes) {
+        int touchIndex = -1;
+        for (int index = 0; index < minutes.size(); index++) {
+            Candle candle = minutes.get(index);
             if (candle.openTime() < setup.openTime()) continue;
             if (candle.openTime() >= setup.closeTime()) break;
-            if (side == Side.LONG ? candle.low() <= touch : candle.high() >= touch) {
-                touched = true;
+            if (touchIndex < 0) {
+                if (side == Side.LONG ? candle.low() <= touch : candle.high() >= touch) {
+                    touchIndex = index;
+                }
+            } else if (index > touchIndex
+                    && (side == Side.LONG ? candle.high() >= entry : candle.low() <= entry)) {
+                return;
             }
         }
-        if (!touched) return;
-        boolean entryAlreadyCrossed = side == Side.LONG
-                ? latest.high() >= entry : latest.low() <= entry;
-        if (entryAlreadyCrossed) return;
+        if (touchIndex < 0) return;
 
         ZonedDateTime time = ZonedDateTime.ofInstant(Instant.ofEpochMilli(setup.openTime()), IST);
         Rule rule = rule(side, time);
