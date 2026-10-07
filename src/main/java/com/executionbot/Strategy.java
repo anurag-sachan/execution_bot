@@ -38,7 +38,7 @@ final class Strategy {
     }
 
     String currentWindowReport(List<Candle> minutes, List<Candle> halfHours,
-                               List<Candle> hours, long observedAt) {
+                               List<Candle> hours, long observedAt, Side openPositionSide) {
         if (halfHours.isEmpty()) {
             return "30m window: unavailable (no 30-minute candles)";
         }
@@ -81,7 +81,7 @@ final class Strategy {
                 .append(TIME_FORMAT.format(ZonedDateTime.ofInstant(
                         Instant.ofEpochMilli(hour.openTime()), IST)))
                 .append(", 30m: ").append(TIME_FORMAT.format(windowTime)).append('\n')
-                .append(touchStatus(minutes, window, previous))
+                .append(touchStatus(minutes, window, previous, hour, openPositionSide))
                 .append("---------------\n");
         report.append(String.format(Locale.ROOT,
                 "🔴 SHORT ↓ 1H_entry_level=%.2f 30m_touch_level=%.2f%n"
@@ -116,20 +116,39 @@ final class Strategy {
         return report.toString();
     }
 
-    private String touchStatus(List<Candle> minutes, Candle setup, Candle previous) {
+    private String touchStatus(List<Candle> minutes, Candle setup, Candle previous,
+                               Candle hour, Side openPositionSide) {
+        if (openPositionSide != null) {
+            return "⚪️ OPEN POSITION : " + openPositionSide + "\n";
+        }
         double longTouch = previous.high() - 360;
         double shortTouch = previous.low() + 360;
-        boolean longTouched = false;
-        boolean shortTouched = false;
+        double longEntry = hour.open() - LONG_LEVEL_OFFSET;
+        double shortEntry = hour.open() + SHORT_LEVEL_OFFSET;
+        Candle longTouchCandle = null;
+        Candle shortTouchCandle = null;
         for (Candle candle : minutes) {
             if (candle.openTime() < setup.openTime()) continue;
             if (candle.openTime() >= setup.closeTime()) break;
-            longTouched |= candle.low() <= longTouch;
-            shortTouched |= candle.high() >= shortTouch;
+            if (longTouch < longEntry && longTouchCandle == null && candle.low() <= longTouch) {
+                longTouchCandle = candle;
+            }
+            if (shortTouch > shortEntry && shortTouchCandle == null && candle.high() >= shortTouch) {
+                shortTouchCandle = candle;
+            }
         }
-        return (longTouched || shortTouched)
-                ? "🔵 WAITING FOR ENTRY\n"
-                : "🟠 WAITING FOR SETUP\n";
+        if (longTouchCandle == null && shortTouchCandle == null) {
+            return "🟠 WAITING FOR SETUP\n";
+        }
+        Candle touched = longTouchCandle != null
+                && (shortTouchCandle == null
+                || longTouchCandle.openTime() <= shortTouchCandle.openTime())
+                ? longTouchCandle : shortTouchCandle;
+        String level = touched == longTouchCandle && touched == shortTouchCandle
+                ? "30M H/L"
+                : touched == longTouchCandle ? "30M LOW" : "30M HIGH";
+        return String.format(Locale.ROOT, "🔵 WAITING FOR ENTRY @%s %s touched%n",
+                TIME_FORMAT.format(Instant.ofEpochMilli(touched.openTime()).atZone(IST)), level);
     }
 
     Signal latestSignal(List<Candle> minutes, List<Candle> halfHours,

@@ -1,4 +1,5 @@
-pendingSignal:
-pendingSetupEnd:0
-pendingOrderId:
+pendingSignal:SHORT:1791396000000:1791396000000
+pendingSetupEnd:1791397800000
+pendingOrderId:W3152766739173844
 riskCap:1000
+closedPositionIds:

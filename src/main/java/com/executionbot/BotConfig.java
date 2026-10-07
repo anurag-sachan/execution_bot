@@ -31,7 +31,7 @@ record BotConfig(String symbol, String matchTraderBaseUrl,
                 integer(e, "BOT_RISK_CAP", 4000),
                 decimal(e, "BOT_POINT_VALUE_PER_LOT", 1.0),
                 decimal(e, "BOT_MAX_LOTS", 2.0),
-                decimal(e, "BOT_SPREAD_POINTS", 15.0),
+                decimal(e, "BOT_SPREAD_POINTS", 20.0),
                 integer(e, "BOT_POLL_SECONDS", 15),
                 integer(e, "BOT_MARKET_CACHE_MINUTES", 24 * 60),
                 integer(e, "BOT_MAX_RETRIES", 5));

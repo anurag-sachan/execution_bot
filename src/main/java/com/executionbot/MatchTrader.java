@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -43,19 +44,68 @@ final class MatchTrader {
         return false;
     }
 
+    Side openPositionSide(String symbol) throws Exception {
+        for (JsonNode position : openPositions().path("positions")) {
+            if (!symbol.equals(position.path("symbol").asText())) continue;
+            return switch (position.path("side").asText("").toUpperCase(Locale.ROOT)) {
+                case "BUY", "LONG" -> Side.LONG;
+                case "SELL", "SHORT" -> Side.SHORT;
+                default -> null;
+            };
+        }
+        return null;
+    }
+
     void syncPositions() throws Exception {
-            List<String> rows = new ArrayList<>();
-            for (JsonNode position : openPositions().path("positions")) {
-                String id = position.path("id").asText();
-                String symbol = position.path("symbol").asText();
-                String side = position.path("side").asText();
-                String volume = position.path("volume").asText();
-                String stopLoss = position.path("stopLoss").asText("0");
-                rows.add(String.join(",", id, symbol, side, volume, stopLoss));
+        List<String> rows = new ArrayList<>();
+        for (JsonNode position : openPositions().path("positions")) {
+            String id = position.path("id").asText();
+            String symbol = position.path("symbol").asText();
+            String side = position.path("side").asText();
+            String volume = position.path("volume").asText();
+            String stopLoss = position.path("stopLoss").asText("0");
+            rows.add(String.join(",", id, symbol, side, volume, stopLoss));
+        }
+        Path file = Path.of("data", "OpenPositions.csv");
+        Files.createDirectories(file.getParent());
+        Files.write(file, rows, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    List<ClosedTrade> closedPositions(String symbol) throws Exception {
+        Instant to = Instant.now();
+        Instant from = to.minusSeconds(90L * 24L * 60L * 60L);
+        String payload = String.format(Locale.ROOT,
+                "{\"from\":\"%s\",\"to\":\"%s\","
+                        + "\"symbolCalcTypes\":[\"FOREX\",\"CFD\",\"FOREXCFD\"]}",
+                DateTimeFormatter.ISO_INSTANT.format(from),
+                DateTimeFormatter.ISO_INSTANT.format(to));
+        JsonNode root = request("trading-edge", "POST", "/closed-positions", payload);
+        JsonNode rows = root.isArray() ? root : firstArray(root,
+                "closedPositions", "positions", "data");
+        List<ClosedTrade> trades = new ArrayList<>();
+        if (rows == null) return trades;
+        for (JsonNode row : rows) {
+            if (!symbol.equals(text(row, "symbol", "instrument"))) continue;
+            String id = text(row, "id", "positionId", "orderId", "dealId");
+            if (id.isBlank()) continue;
+            double stopLevel = number(row, "stopLossPrice", "slPrice", "stopLoss");
+            double targetLevel = number(row, "takeProfitPrice", "tpPrice", "takeProfit");
+            double entryPrice = number(row, "openPrice", "entryPrice", "price");
+            double stopPoints = number(row, "slPoints", "stopPoints");
+            double targetPoints = number(row, "tpPoints", "targetPoints");
+            if (stopPoints == 0 && stopLevel != 0) stopPoints = Math.abs(entryPrice - stopLevel);
+            if (targetPoints == 0 && targetLevel != 0) {
+                targetPoints = Math.abs(targetLevel - entryPrice);
             }
-            Path file = Path.of("data", "OpenPositions.csv");
-            Files.createDirectories(file.getParent());
-            Files.write(file, rows, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            trades.add(new ClosedTrade(id,
+                    timestamp(row, "openTime", "entryTime", "createdAt", "openedAt"),
+                    text(row, "side", "orderSide"),
+                    entryPrice, stopPoints, targetPoints, stopLevel, targetLevel,
+                    number(row, "volume", "quantity"),
+                    text(row, "result", "outcome"),
+                    number(row, "profit", "pnl", "profitLoss")));
+        }
+        return trades;
     }
 
     void openManagedPosition(Signal signal) throws Exception {
@@ -102,8 +152,9 @@ final class MatchTrader {
         double targetPrice = signal.side() == Side.LONG
                 ? executionPrice + targetDistance : executionPrice - targetDistance;
         double risk = config.riskCap() * signal.riskMultiplier();
-        double volume = Math.min(config.maxLots(),
-                risk / (stopDistance * config.pointValuePerLot()));
+        double volume = 1;
+        // double volume = Math.min(config.maxLots(),
+        //         risk / (stopDistance * config.pointValuePerLot()));
         if (volume <= 0) {
             throw new IllegalArgumentException("Calculated pending-order volume is not positive");
         }
@@ -120,6 +171,8 @@ final class MatchTrader {
         if (orderId.isBlank()) {
             throw new IOException("MatchTrader pending order response did not contain an order id");
         }
+        System.out.printf("\n⚠️ %s STOP order submitted: B/A_ENTRY_PRICE=%.2f SL=%.2f TP=%.2f%n",
+                side, executionPrice, stopPrice, targetPrice);
         return orderId;
     }
 
@@ -127,8 +180,17 @@ final class MatchTrader {
         if (orderId == null || orderId.isBlank()) {
             throw new IllegalArgumentException("Pending order id must not be blank");
         }
-        request("trading-edge", "POST", "/pending-order/cancel",
-                String.format(Locale.ROOT, "{\"id\":\"%s\"}", escape(orderId)));
+        try {
+            request("trading-edge", "POST", "/pending-order/cancel",
+                    String.format(Locale.ROOT, "{\"id\":\"%s\"}", escape(orderId)));
+        } catch (IOException error) {
+            if (!error.getMessage().contains("ORDER_NOT_FOUND")
+                    && !error.getMessage().contains("Order not found")) {
+                throw error;
+            }
+            System.out.println("Pending STOP order " + orderId
+                    + " was already cancelled or filled; clearing local state.");
+        }
     }
 
     List<Candle> candles(String interval, int amount) throws Exception {
@@ -234,6 +296,11 @@ final class MatchTrader {
     }
 
     private JsonNode request(String api, String method, String path, String body) throws Exception {
+        return request(api, method, path, body, "application/json");
+    }
+
+    private JsonNode request(String api, String method, String path, String body,
+                             String contentType) throws Exception {
         if (systemUuid.isBlank() || apiToken.isBlank() || cookie.isBlank()) login();
         IOException lastFailure = null;
         for (int attempt = 1; attempt <= config.maxRetries(); attempt++) {
@@ -245,7 +312,7 @@ final class MatchTrader {
                 if (body == null) {
                     builder.method(method, HttpRequest.BodyPublishers.noBody());
                 } else {
-                    builder.header("Content-Type", "application/json")
+                    builder.header("Content-Type", contentType)
                             .method(method, HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
                 }
                 HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
@@ -267,7 +334,45 @@ final class MatchTrader {
         throw lastFailure == null ? new IOException("MatchTrader request failed") : lastFailure;
     }
 
+    private static JsonNode firstArray(JsonNode root, String... names) {
+        for (String name : names) {
+            if (root.path(name).isArray()) return root.path(name);
+        }
+        return null;
+    }
+
+    private static String text(JsonNode row, String... names) {
+        for (String name : names) {
+            JsonNode value = row.get(name);
+            if (value != null && !value.isNull()) return value.asText("");
+        }
+        return "";
+    }
+
+    private static double number(JsonNode row, String... names) {
+        for (String name : names) {
+            JsonNode value = row.get(name);
+            if (value != null && value.isNumber()) return value.asDouble();
+        }
+        return 0;
+    }
+
+    private static long timestamp(JsonNode row, String... names) {
+        for (String name : names) {
+            JsonNode value = row.get(name);
+            if (value == null || !value.isNumber()) continue;
+            long timestamp = value.asLong();
+            return timestamp < 10_000_000_000L ? timestamp * 1_000L : timestamp;
+        }
+        return 0;
+    }
+
     private static String escape(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
+}
+
+record ClosedTrade(String id, long entryTime, String side, double entryPrice,
+                   double stopPoints, double targetPoints, double stopLevel,
+                   double targetLevel, double volume, String result, double profitLoss) {
 }
