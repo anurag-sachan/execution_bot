@@ -201,21 +201,20 @@ final class Strategy {
         double longEntryLevel = hour.open() - LONG_LEVEL_OFFSET;
         if (longTouchLevel < longEntryLevel) {
             addPendingCandidate(candidates, Side.LONG, setup, longTouchLevel,
-                    longEntryLevel, minutes, observedAt);
+                    longEntryLevel, minutes);
         }
         double shortTouchLevel = previous.low() + 360;
         double shortEntryLevel = hour.open() + SHORT_LEVEL_OFFSET;
         if (shortTouchLevel > shortEntryLevel) {
             addPendingCandidate(candidates, Side.SHORT, setup, shortTouchLevel,
-                    shortEntryLevel, minutes, observedAt);
+                    shortEntryLevel, minutes);
         }
         return candidates.stream()
                 .max(java.util.Comparator.comparingLong(Signal::touchTime)).orElse(null);
     }
 
     private void addPendingCandidate(List<Signal> out, Side side, Candle setup,
-                                     double touch, double entry, List<Candle> minutes,
-                                     long observedAt) {
+                                     double touch, double entry, List<Candle> minutes) {
         if (side == Side.LONG ? touch >= entry : touch <= entry) return;
         int touchIndex = -1;
         for (int index = 0; index < minutes.size(); index++) {
@@ -232,7 +231,6 @@ final class Strategy {
             }
         }
         if (touchIndex < 0) return;
-        if (minutes.get(touchIndex).openTime() + 60_000L > observedAt) return;
 
         ZonedDateTime time = ZonedDateTime.ofInstant(Instant.ofEpochMilli(setup.openTime()), IST);
         Rule rule = rule(side, time);
@@ -346,9 +344,9 @@ final class Strategy {
 
     private static final class SetOfDays {
         private final Map<Side, EnumSet<DayOfWeek>> values = Map.of(
-                Side.LONG, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
+                Side.LONG, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                         DayOfWeek.FRIDAY, DayOfWeek.SUNDAY),
-                Side.SHORT, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
+                Side.SHORT, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                         DayOfWeek.FRIDAY, DayOfWeek.SUNDAY));
         boolean contains(Side side, DayOfWeek day) { return values.get(side).contains(day); }
     }

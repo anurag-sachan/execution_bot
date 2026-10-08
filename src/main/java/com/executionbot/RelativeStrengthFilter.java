@@ -65,7 +65,7 @@ final class RelativeStrengthFilter {
         double touch = side == Side.LONG ? previous.high() - 360 : previous.low() + 360;
         double entry = side == Side.LONG ? hour.open() - 90 : hour.open() + 110;
         if (side == Side.LONG ? touch >= entry : touch <= entry) {
-            return String.format(Locale.ROOT, "%s RS : +0.000000 (invalid level relationship)%n", side);
+            return String.format(Locale.ROOT, "\n%s RS : +0.000000 %n", side);
         }
         double cumulative = 0.0;
         boolean touchSeen = false;
@@ -89,7 +89,7 @@ final class RelativeStrengthFilter {
         if (events.isEmpty()) {
             return String.format(Locale.ROOT, "%s RS : %+.6f%n", side, cumulative);
         }
-        return String.format(Locale.ROOT, "\n%s RS : %+.6f | EVENTS -> %s%n",
+        return String.format(Locale.ROOT, "%s RS : %+.6f | EVENTS -> %s%n",
                 side, cumulative, String.join(" | ", events));
     }
 
