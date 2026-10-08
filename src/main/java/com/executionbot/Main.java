@@ -85,10 +85,10 @@ public final class Main {
         Signal signal = strategy.pendingSignal(minutes, halfHours, hours, now);
         if (signal == null) return;
         if (signal.key().equals(state.read("processedSetup", ""))) return;
-        if (!relativeStrength.allows(signal)) {
-            System.out.println("🗣️ Relative-strength rejected setup; no STOP ORDER submitted.");
-            return;
-        }
+        // if (!relativeStrength.allows(signal)) {
+        //     System.out.println("🗣️ Relative-strength rejected setup; no STOP ORDER submitted.");
+        //     return;
+        // }
         String orderId = broker.createPendingOrder(signal,
                 MatchTrader.PendingOrderType.STOP, signal.entryLevel());
         state.write("pendingOrderId", orderId);

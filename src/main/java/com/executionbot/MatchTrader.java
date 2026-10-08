@@ -123,7 +123,8 @@ final class MatchTrader {
         double stop = signal.stopPoints() + config.spreadPoints();
         double target = stop * signal.targetPoints() / signal.stopPoints();
         double risk = config.riskCap() * signal.riskMultiplier();
-        double volume = Math.min(config.maxLots(), risk / (stop * config.pointValuePerLot()));
+        double volume = 1;
+        // double volume = Math.min(config.maxLots(), risk / (stop * config.pointValuePerLot()));
         if (volume <= 0) throw new IllegalArgumentException("Calculated volume is not positive");
 
         String side = signal.side() == Side.LONG ? "BUY" : "SELL";

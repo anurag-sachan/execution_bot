@@ -1,6 +1,6 @@
-pendingSignal:
-pendingSetupEnd:0
-pendingOrderId:
+pendingSignal:LONG:1791480600000:1791481740000
+pendingSetupEnd:1791482400000
+pendingOrderId:W5878350910275055
 riskCap:1000
-processedSetup:LONG:1791462600000:1791463800000
+processedSetup:SHORT:1791477000000:1791477000000
 closedPositionIds:

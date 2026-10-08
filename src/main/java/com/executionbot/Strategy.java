@@ -344,9 +344,9 @@ final class Strategy {
 
     private static final class SetOfDays {
         private final Map<Side, EnumSet<DayOfWeek>> values = Map.of(
-                Side.LONG, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
+                Side.LONG, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
                         DayOfWeek.FRIDAY, DayOfWeek.SUNDAY),
-                Side.SHORT, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
+                Side.SHORT, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
                         DayOfWeek.FRIDAY, DayOfWeek.SUNDAY));
         boolean contains(Side side, DayOfWeek day) { return values.get(side).contains(day); }
     }
