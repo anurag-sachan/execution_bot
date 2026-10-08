@@ -213,6 +213,28 @@ final class Strategy {
                 .max(java.util.Comparator.comparingLong(Signal::touchTime)).orElse(null);
     }
 
+    boolean touchConditionMet(List<Candle> minutes, List<Candle> halfHours,
+                              List<Candle> hours, long observedAt) {
+        if (halfHours.size() < 2 || minutes.isEmpty()) return false;
+        Candle setup = halfHours.get(halfHours.size() - 1);
+        if (setup.openTime() + 30 * 60_000L <= observedAt) return false;
+        Candle previous = halfHours.get(halfHours.size() - 2);
+        long hourStart = Math.floorDiv(setup.openTime(), 3_600_000L) * 3_600_000L;
+        Candle hour = hours.stream().filter(c -> c.openTime() == hourStart).findFirst().orElse(null);
+        if (hour == null) return false;
+        double longTouch = previous.high() - 360;
+        double longEntry = hour.open() - LONG_LEVEL_OFFSET;
+        double shortTouch = previous.low() + 360;
+        double shortEntry = hour.open() + SHORT_LEVEL_OFFSET;
+        for (Candle candle : minutes) {
+            if (candle.openTime() < setup.openTime()) continue;
+            if (candle.openTime() >= setup.closeTime()) break;
+            if (longTouch < longEntry && candle.low() <= longTouch) return true;
+            if (shortTouch > shortEntry && candle.high() >= shortTouch) return true;
+        }
+        return false;
+    }
+
     private void addPendingCandidate(List<Signal> out, Side side, Candle setup,
                                      double touch, double entry, List<Candle> minutes) {
         if (side == Side.LONG ? touch >= entry : touch <= entry) return;
@@ -344,7 +366,7 @@ final class Strategy {
 
     private static final class SetOfDays {
         private final Map<Side, EnumSet<DayOfWeek>> values = Map.of(
-                Side.LONG, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
+                Side.LONG, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
                         DayOfWeek.FRIDAY, DayOfWeek.SUNDAY),
                 Side.SHORT, EnumSet.of(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
                         DayOfWeek.FRIDAY, DayOfWeek.SUNDAY));

@@ -32,17 +32,18 @@ public final class Main {
         System.out.printf("\n---------- Execution Bot : %s | 📍(%s) ----------%n", config.symbol(),
                 ZoneId.of("Asia/Kolkata"));
         while (true) {
+            boolean touchActive = false;
             try {
-                runCycle(config, state, broker, strategy, relativeStrength);
+                touchActive = runCycle(config, state, broker, strategy, relativeStrength);
             } catch (Exception error) {
                 System.err.println("Cycle failed: " + error.getMessage());
             }
-            long wait = Duration.ofSeconds(config.pollSeconds()).toMillis();
+            long wait = touchActive ? 1_000L : Duration.ofSeconds(config.pollSeconds()).toMillis();
             Thread.sleep(wait);
         }
     }
 
-    private static void runCycle(BotConfig config, LocalState state,
+    private static boolean runCycle(BotConfig config, LocalState state,
                                    MatchTrader broker, Strategy strategy,
                                    RelativeStrengthFilter relativeStrength) throws Exception {
         syncClosedPositions(config, state, broker);
@@ -56,7 +57,7 @@ public final class Main {
             }
             state.write("processedSetup", state.read("pendingSignal", ""));
             clearPendingOrder(state);
-            return;
+            return false;
         }
 
         long now = Instant.now().toEpochMilli();
@@ -79,12 +80,12 @@ public final class Main {
                 clearPendingOrder(state);
                 System.out.println("\n◇ Canceled pending STOP order : setup window closed.");
             }
-            return;
+            return false;
         }
 
         Signal signal = strategy.pendingSignal(minutes, halfHours, hours, now);
-        if (signal == null) return;
-        if (signal.key().equals(state.read("processedSetup", ""))) return;
+        if (signal == null) return strategy.touchConditionMet(minutes, halfHours, hours, now);
+        if (signal.key().equals(state.read("processedSetup", ""))) return false;
         // if (!relativeStrength.allows(signal)) {
         //     System.out.println("🗣️ Relative-strength rejected setup; no STOP ORDER submitted.");
         //     return;
@@ -94,6 +95,7 @@ public final class Main {
         state.write("pendingOrderId", orderId);
         state.write("pendingSetupEnd", Long.toString(signal.setupStart() + 30 * 60_000L));
         state.write("pendingSignal", signal.key());
+        return false;
     }
 
     private static void syncClosedPositions(BotConfig config, LocalState state,
