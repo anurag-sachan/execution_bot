@@ -56,6 +56,17 @@ final class MatchTrader {
         return null;
     }
 
+    List<String> openPositionIds(String symbol) throws Exception {
+        List<String> ids = new ArrayList<>();
+        for (JsonNode position : openPositions().path("positions")) {
+            if (symbol.equals(position.path("symbol").asText())) {
+                String id = position.path("id").asText("");
+                if (!id.isBlank()) ids.add(id);
+            }
+        }
+        return ids;
+    }
+
     void syncPositions() throws Exception {
         List<String> rows = new ArrayList<>();
         for (JsonNode position : openPositions().path("positions")) {

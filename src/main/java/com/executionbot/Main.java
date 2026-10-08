@@ -27,12 +27,13 @@ public final class Main {
                 state.read("riskCap", Integer.toString(config.riskCap()))));
         MatchTrader broker = new MatchTrader(config);
         Strategy strategy = new Strategy(config);
+        RelativeStrengthFilter relativeStrength = new RelativeStrengthFilter();
 
-        System.out.printf("Execution bot started for %s (%s)%n", config.symbol(),
+        System.out.printf("\n---------- Execution Bot : %s | 📍(%s) ----------%n", config.symbol(),
                 ZoneId.of("Asia/Kolkata"));
         while (true) {
             try {
-                runCycle(config, state, broker, strategy);
+                runCycle(config, state, broker, strategy, relativeStrength);
             } catch (Exception error) {
                 System.err.println("Cycle failed: " + error.getMessage());
             }
@@ -42,13 +43,18 @@ public final class Main {
     }
 
     private static void runCycle(BotConfig config, LocalState state,
-                                   MatchTrader broker, Strategy strategy) throws Exception {
+                                   MatchTrader broker, Strategy strategy,
+                                   RelativeStrengthFilter relativeStrength) throws Exception {
         syncClosedPositions(config, state, broker);
         String pendingOrderId = state.read("pendingOrderId", "");
         broker.syncPositions();
         Side openPositionSide = broker.openPositionSide(config.symbol());
         if (!pendingOrderId.isBlank() && openPositionSide != null) {
             System.out.println("Tracked STOP order filled; open position synchronized.");
+            for (String positionId : broker.openPositionIds(config.symbol())) {
+                addStateId(state, "executedPositionIds", positionId);
+            }
+            state.write("processedSetup", state.read("pendingSignal", ""));
             clearPendingOrder(state);
             return;
         }
@@ -61,6 +67,7 @@ public final class Main {
         if (currentMinute != lastReportedMinute) {
             System.out.print(strategy.currentWindowReport(
                     minutes, halfHours, hours, now, openPositionSide));
+            System.out.print(relativeStrength.currentSetupReport(minutes, halfHours, hours, now));
             lastReportedMinute = currentMinute;
         }
 
@@ -68,14 +75,20 @@ public final class Main {
         if (!pendingOrderId.isBlank()) {
             if (now >= pendingSetupEnd) {
                 broker.cancelPendingOrder(pendingOrderId);
+                state.write("processedSetup", state.read("pendingSignal", ""));
                 clearPendingOrder(state);
-                System.out.println("◇ Canceled pending STOP order after setup window closed.");
+                System.out.println("\n◇ Canceled pending STOP order : setup window closed.");
             }
             return;
         }
 
         Signal signal = strategy.pendingSignal(minutes, halfHours, hours, now);
         if (signal == null) return;
+        if (signal.key().equals(state.read("processedSetup", ""))) return;
+        if (!relativeStrength.allows(signal)) {
+            System.out.println("🗣️ Relative-strength rejected setup; no STOP ORDER submitted.");
+            return;
+        }
         String orderId = broker.createPendingOrder(signal,
                 MatchTrader.PendingOrderType.STOP, signal.entryLevel());
         state.write("pendingOrderId", orderId);
@@ -101,7 +114,9 @@ public final class Main {
                             + System.lineSeparator(),
                     StandardOpenOption.CREATE);
         }
+        Set<String> executed = stateIds(state, "executedPositionIds");
         for (ClosedTrade trade : broker.closedPositions(config.symbol())) {
+            if (!executed.contains(trade.id())) continue;
             if (!synced.add(trade.id())) continue;
             ZonedDateTime entryTime = ZonedDateTime.ofInstant(
                     Instant.ofEpochMilli(trade.entryTime()), ZoneId.of("Asia/Kolkata"));
@@ -128,6 +143,29 @@ public final class Main {
         state.write("pendingOrderId", "");
         state.write("pendingSetupEnd", "0");
         state.write("pendingSignal", "");
+    }
+
+    private static void addStateId(LocalState state, String key, String id) throws IOException {
+        if (id == null || id.isBlank()) return;
+        Set<String> ids = new HashSet<>();
+        String existing = state.read(key, "");
+        if (!existing.isBlank()) {
+            for (String value : existing.split(",")) {
+                if (!value.isBlank()) ids.add(value);
+            }
+        }
+        if (ids.add(id)) state.write(key, String.join(",", ids));
+    }
+
+    private static Set<String> stateIds(LocalState state, String key) throws IOException {
+        Set<String> ids = new HashSet<>();
+        String value = state.read(key, "");
+        if (!value.isBlank()) {
+            for (String id : value.split(",")) {
+                if (!id.isBlank()) ids.add(id);
+            }
+        }
+        return ids;
     }
 
     static String formatIst(long timestamp) {

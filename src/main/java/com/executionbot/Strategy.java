@@ -62,7 +62,7 @@ final class Strategy {
                 currentTime.getDayOfWeek(), ignoredDay ? " (IGNORED)" : "",
                 TIME_FORMAT.format(currentTime), risk));
         if (hour == null) {
-            report.append("current windows -> 1hr: unavailable, 30m: ")
+            report.append("current windows -> 1hr: unavailable | 30m: ")
                     .append(TIME_FORMAT.format(windowTime)).append('\n');
             return report.toString();
         }
@@ -73,19 +73,19 @@ final class Strategy {
             report.append("current windows -> 1hr: ")
                     .append(TIME_FORMAT.format(ZonedDateTime.ofInstant(
                             Instant.ofEpochMilli(hour.openTime()), IST)))
-                    .append(", 30m: ").append(TIME_FORMAT.format(windowTime)).append('\n')
+                    .append(" | 30m: ").append(TIME_FORMAT.format(windowTime)).append('\n')
                     .append("Levels unavailable (previous 30-minute candle missing)\n");
             return report.toString();
         }
         report.append("current windows -> 1hr: ")
                 .append(TIME_FORMAT.format(ZonedDateTime.ofInstant(
                         Instant.ofEpochMilli(hour.openTime()), IST)))
-                .append(", 30m: ").append(TIME_FORMAT.format(windowTime)).append('\n')
+                .append(" | 30m: ").append(TIME_FORMAT.format(windowTime)).append('\n')
                 .append(touchStatus(minutes, window, previous, hour, openPositionSide))
                 .append("---------------\n");
         report.append(String.format(Locale.ROOT,
-                "🔴 SHORT ↓ 1H_entry_level=%.2f 30m_touch_level=%.2f%n"
-                        + "🟢 LONG  ↑ 1H_entry_level=%.2f 30m_touch_level=%.2f%n",
+                "SHORT ↓ 1H_entry_level=%.2f 30m_touch_level=%.2f%n"
+                        + "LONG  ↑ 1H_entry_level=%.2f 30m_touch_level=%.2f%n",
                 hour.open() + SHORT_LEVEL_OFFSET, previous.low() + 360,
                 hour.open() - LONG_LEVEL_OFFSET, previous.high() - 360));
         report.append("---------------\n");
@@ -105,13 +105,22 @@ final class Strategy {
                     ? executionEntry - stopDistance : executionEntry + stopDistance;
             double targetPrice = side == Side.LONG
                     ? executionEntry + targetDistance : executionEntry - targetDistance;
+            String avoidance = exclusion;
+            
+            if (avoidance.isEmpty()) {
+                Double roundLevel = roundFilterLevel(side, entry, rule.stop);
+                if (roundLevel != null) {
+                    avoidance = String.format(Locale.ROOT,
+                            "\n ⏺ ROUND NUMBER IN SL range : %.0f", roundLevel);
+                }
+            }
             report.append(String.format(Locale.ROOT,
                     "%s %s: B/A_ENTRY_PRICE=%.2f SL=%.2f TP=%.2f "
                             + "stop=%.0f target=%.2f (spread:%.0f)%s%n",
                     side == Side.SHORT ? "🔴 ↓" : "🟢 ↑", side,
                     executionEntry, stopPrice, targetPrice, stopDistance, targetDistance,
                     config.spreadPoints(),
-                    exclusion.isEmpty() ? "" : " EXCLUDED: " + exclusion));
+                    avoidance.isEmpty() ? "" : " AVOID: " + avoidance));
         }
         return report.toString();
     }
@@ -138,7 +147,7 @@ final class Strategy {
             }
         }
         if (longTouchCandle == null && shortTouchCandle == null) {
-            return "🟠 WAITING FOR SETUP\n";
+            return "WAITING FOR SETUP\n";
         }
         Candle touched = longTouchCandle != null
                 && (shortTouchCandle == null
@@ -147,7 +156,7 @@ final class Strategy {
         String level = touched == longTouchCandle && touched == shortTouchCandle
                 ? "30M H/L"
                 : touched == longTouchCandle ? "30M LOW" : "30M HIGH";
-        return String.format(Locale.ROOT, "🔵 WAITING FOR ENTRY @%s %s touched%n",
+        return String.format(Locale.ROOT, "🔵 %s %s touched%n",
                 TIME_FORMAT.format(Instant.ofEpochMilli(touched.openTime()).atZone(IST)), level);
     }
 
@@ -192,20 +201,21 @@ final class Strategy {
         double longEntryLevel = hour.open() - LONG_LEVEL_OFFSET;
         if (longTouchLevel < longEntryLevel) {
             addPendingCandidate(candidates, Side.LONG, setup, longTouchLevel,
-                    longEntryLevel, minutes);
+                    longEntryLevel, minutes, observedAt);
         }
         double shortTouchLevel = previous.low() + 360;
         double shortEntryLevel = hour.open() + SHORT_LEVEL_OFFSET;
         if (shortTouchLevel > shortEntryLevel) {
             addPendingCandidate(candidates, Side.SHORT, setup, shortTouchLevel,
-                    shortEntryLevel, minutes);
+                    shortEntryLevel, minutes, observedAt);
         }
         return candidates.stream()
                 .max(java.util.Comparator.comparingLong(Signal::touchTime)).orElse(null);
     }
 
     private void addPendingCandidate(List<Signal> out, Side side, Candle setup,
-                                     double touch, double entry, List<Candle> minutes) {
+                                     double touch, double entry, List<Candle> minutes,
+                                     long observedAt) {
         if (side == Side.LONG ? touch >= entry : touch <= entry) return;
         int touchIndex = -1;
         for (int index = 0; index < minutes.size(); index++) {
@@ -222,11 +232,13 @@ final class Strategy {
             }
         }
         if (touchIndex < 0) return;
+        if (minutes.get(touchIndex).openTime() + 60_000L > observedAt) return;
 
         ZonedDateTime time = ZonedDateTime.ofInstant(Instant.ofEpochMilli(setup.openTime()), IST);
         Rule rule = rule(side, time);
         if (rule != null && allowed(side, rule, time) && !roundFiltered(side, entry, rule.stop)) {
-            out.add(new Signal(side, setup.openTime(), setup.openTime(), setup.openTime(),
+            out.add(new Signal(side, setup.openTime(), minutes.get(touchIndex).openTime(),
+                    minutes.get(touchIndex).openTime(),
                     touch, entry, rule.stop, rule.target, reducedRisk(time) ? 0.1 : 1.0));
         }
     }
@@ -297,11 +309,16 @@ final class Strategy {
     }
 
     private boolean roundFiltered(Side side, double entry, int stop) {
+        return roundFilterLevel(side, entry, stop) != null;
+    }
+
+    private Double roundFilterLevel(Side side, double entry, int stop) {
         double execution = entry + (side == Side.LONG ? config.spreadPoints() : 0);
         double stopPrice = side == Side.LONG ? execution - stop : execution + stop;
         double low = Math.min(execution, stopPrice);
         double high = Math.max(execution, stopPrice);
-        return Math.ceil((low - 1e-9) / 500) <= Math.floor((high + 1e-9) / 500);
+        double firstRoundLevel = Math.ceil((low - 1e-9) / 500) * 500;
+        return firstRoundLevel <= high + 1e-9 ? firstRoundLevel : null;
     }
 
     private record Rule(int stop, int target) {}
