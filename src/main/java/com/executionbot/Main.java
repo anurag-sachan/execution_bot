@@ -46,7 +46,12 @@ public final class Main {
     private static boolean runCycle(BotConfig config, LocalState state,
                                    MatchTrader broker, Strategy strategy,
                                    RelativeStrengthFilter relativeStrength) throws Exception {
-        syncClosedPositions(config, state, broker);
+        try {
+            syncClosedPositions(config, state, broker);
+        } catch (Exception error) {
+            System.err.println("Closed-position sync unavailable; will retry: "
+                    + error.getMessage());
+        }
         String pendingOrderId = state.read("pendingOrderId", "");
         broker.syncPositions();
         Side openPositionSide = broker.openPositionSide(config.symbol());
@@ -111,8 +116,9 @@ public final class Main {
         Files.createDirectories(file.getParent());
         if (!Files.exists(file)) {
             Files.writeString(file,
-                    "DATETIME (IST),SIDE,ENTRY_PRICE,SL_POINTS,TP_POINTS,"
-                            + "SL_LEVEL,TP_LEVEL,VOLUME,WIN_LOSS,PROFIT_LOSS"
+                    "SYMBOL,ID,SIDE,WIN_LOSS,OPEN_TIME (IST),SL_LENGTH,TP_LENGTH,"
+                            + "OPEN_PRICE,SL,TP,CLOSE_PRICE,CLOSE_TIME (IST),VOLUME,"
+                            + "SWAP,COMMISSIONS,NET_PROFIT"
                             + System.lineSeparator(),
                     StandardOpenOption.CREATE);
         }
@@ -120,22 +126,21 @@ public final class Main {
         for (ClosedTrade trade : broker.closedPositions(config.symbol())) {
             if (!executed.contains(trade.id())) continue;
             if (!synced.add(trade.id())) continue;
-            ZonedDateTime entryTime = ZonedDateTime.ofInstant(
+            ZonedDateTime openTime = ZonedDateTime.ofInstant(
                     Instant.ofEpochMilli(trade.entryTime()), ZoneId.of("Asia/Kolkata"));
+            ZonedDateTime closeTime = ZonedDateTime.ofInstant(
+                    Instant.ofEpochMilli(trade.closeTime()), ZoneId.of("Asia/Kolkata"));
             String result = trade.result().isBlank()
                     ? trade.profitLoss() > 0 ? "WIN" : trade.profitLoss() < 0 ? "LOSS" : ""
                     : trade.result();
-            String dateTime = String.format(Locale.ROOT, "%s, %s, %s (IST)",
-                    entryTime.format(DateTimeFormatter.ofPattern("dd-MM-yyyy")),
-                    entryTime.getDayOfWeek(),
-                    entryTime.format(DateTimeFormatter.ofPattern("h:mm a"))
-                            .toLowerCase(Locale.ROOT));
             String row = String.format(Locale.ROOT,
-                    "\"%s\",%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.8f,%s,%.2f%n",
-                    dateTime,
-                    trade.side(), trade.entryPrice(), trade.stopPoints(), trade.targetPoints(),
-                    trade.stopLevel(), trade.targetLevel(), trade.volume(), result,
-                    trade.profitLoss());
+                    "%s,%s,%s,%s,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%s,%.8f,%.2f,%.2f,%.2f%n",
+                    trade.symbol(), trade.id(), trade.side(), result,
+                    openTime.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                    trade.stopPoints(), trade.targetPoints(), trade.entryPrice(),
+                    trade.stopLevel(), trade.targetLevel(), trade.closePrice(),
+                    closeTime.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                    trade.volume(), trade.swap(), trade.commission(), trade.profitLoss());
             Files.writeString(file, row, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         }
         state.write("closedPositionIds", String.join(",", synced));

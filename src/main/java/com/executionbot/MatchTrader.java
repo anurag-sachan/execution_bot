@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,7 +25,11 @@ final class MatchTrader {
     }
 
     private final BotConfig config;
-    private final HttpClient client = HttpClient.newHttpClient();
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
+    private final HttpClient client = HttpClient.newBuilder()
+            .connectTimeout(CONNECT_TIMEOUT)
+            .build();
     private final ObjectMapper mapper = new ObjectMapper();
     private String systemUuid;
     private String apiToken;
@@ -92,7 +97,7 @@ final class MatchTrader {
                 DateTimeFormatter.ISO_INSTANT.format(to));
         JsonNode root = request("trading-edge", "POST", "/closed-positions", payload);
         JsonNode rows = root.isArray() ? root : firstArray(root,
-                "closedPositions", "positions", "data");
+                "operations", "closedPositions", "positions", "data");
         List<ClosedTrade> trades = new ArrayList<>();
         if (rows == null) return trades;
         for (JsonNode row : rows) {
@@ -108,13 +113,19 @@ final class MatchTrader {
             if (targetPoints == 0 && targetLevel != 0) {
                 targetPoints = Math.abs(targetLevel - entryPrice);
             }
-            trades.add(new ClosedTrade(id,
+            trades.add(new ClosedTrade(
+                    text(row, "symbol", "instrument"),
+                    id,
                     timestamp(row, "openTime", "entryTime", "createdAt", "openedAt"),
                     text(row, "side", "orderSide"),
                     entryPrice, stopPoints, targetPoints, stopLevel, targetLevel,
+                    number(row, "closePrice"),
+                    timestamp(row, "time", "closeTime", "closedAt"),
                     number(row, "volume", "quantity"),
+                    number(row, "swap"),
+                    number(row, "commission", "commissions"),
                     text(row, "result", "outcome"),
-                    number(row, "profit", "pnl", "profitLoss")));
+                    number(row, "netProfit", "profit", "pnl", "profitLoss")));
         }
         return trades;
     }
@@ -261,6 +272,7 @@ final class MatchTrader {
     private void login() throws Exception {
         HttpRequest request = HttpRequest.newBuilder(
                 URI.create(config.matchTraderBaseUrl() + "/mtr-core-edge/v2/login"))
+                .timeout(REQUEST_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(String.format(Locale.ROOT,
                         "{\"email\":\"%s\",\"password\":\"%s\"}",
@@ -319,6 +331,7 @@ final class MatchTrader {
             try {
                 HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(
                         config.matchTraderBaseUrl() + "/" + api + "/" + systemUuid + path))
+                        .timeout(REQUEST_TIMEOUT)
                         .header("Auth-trading-api", apiToken).header("Cookie", cookie)
                         .header("Accept", "application/json");
                 if (body == null) {
@@ -372,9 +385,18 @@ final class MatchTrader {
     private static long timestamp(JsonNode row, String... names) {
         for (String name : names) {
             JsonNode value = row.get(name);
-            if (value == null || !value.isNumber()) continue;
-            long timestamp = value.asLong();
-            return timestamp < 10_000_000_000L ? timestamp * 1_000L : timestamp;
+            if (value == null || value.isNull()) continue;
+            if (value.isNumber()) {
+                long timestamp = value.asLong();
+                return timestamp < 10_000_000_000L ? timestamp * 1_000L : timestamp;
+            }
+            if (value.isTextual()) {
+                try {
+                    return Instant.parse(value.asText()).toEpochMilli();
+                } catch (RuntimeException ignored) {
+                    // Try the next supported timestamp field.
+                }
+            }
         }
         return 0;
     }
@@ -384,7 +406,8 @@ final class MatchTrader {
     }
 }
 
-record ClosedTrade(String id, long entryTime, String side, double entryPrice,
+record ClosedTrade(String symbol, String id, long entryTime, String side, double entryPrice,
                    double stopPoints, double targetPoints, double stopLevel,
-                   double targetLevel, double volume, String result, double profitLoss) {
+                   double targetLevel, double closePrice, long closeTime, double volume,
+                   double swap, double commission, String result, double profitLoss) {
 }
