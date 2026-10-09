@@ -576,7 +576,7 @@ public class Main {
             return (rule.stopPoints == 70 && day == DayOfWeek.SATURDAY)
                     || (rule.stopPoints == 270 && day == DayOfWeek.WEDNESDAY);
         }
-        return day == DayOfWeek.FRIDAY || day == DayOfWeek.SATURDAY;
+        return day == DayOfWeek.SATURDAY;
     }
 
         private static void runScheduledBacktest(List<Signal> signals, List<Candle> candles, StringBuilder rawLog)
