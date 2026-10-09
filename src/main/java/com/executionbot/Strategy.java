@@ -52,7 +52,7 @@ final class Strategy {
                 Instant.ofEpochMilli(window.openTime()), IST);
         ZonedDateTime currentTime = ZonedDateTime.ofInstant(
                 Instant.ofEpochMilli(observedAt), IST);
-        boolean excludedDate = Set.of(10, 14, 15).contains(currentTime.getDayOfMonth());
+        boolean excludedDate = Set.of(1, 2, 10, 14, 15).contains(currentTime.getDayOfMonth());
         boolean ignoredDay = !BEST_DAYS.contains(Side.LONG, currentTime.getDayOfWeek());
         double risk = config.riskCap() * (reducedRisk(windowTime) ? 0.1 : 1.0);
         StringBuilder report = new StringBuilder();
