@@ -303,9 +303,8 @@ final class Strategy {
         if (side == Side.LONG && rule.stop == 270 && time.getDayOfWeek() == DayOfWeek.WEDNESDAY) {
             return "LONG 270-point Wednesday rule";
         }
-        if (side == Side.SHORT && (time.getDayOfWeek() == DayOfWeek.FRIDAY
-                || time.getDayOfWeek() == DayOfWeek.SATURDAY)) {
-            return "SHORT Friday/Saturday rule";
+        if (side == Side.SHORT && (time.getDayOfWeek() == DayOfWeek.SATURDAY)) {
+            return "SHORT Saturday rule";
         }
         return "";
     }
