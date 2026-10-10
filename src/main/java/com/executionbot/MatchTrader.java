@@ -27,6 +27,7 @@ final class MatchTrader {
     private final BotConfig config;
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
+    private static final double LEVERAGE = 2.0;
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(CONNECT_TIMEOUT)
             .build();
@@ -72,6 +73,30 @@ final class MatchTrader {
         return ids;
     }
 
+    boolean pendingOrderExists(String orderId) throws Exception {
+        if (orderId == null || orderId.isBlank()) return false;
+        try {
+            JsonNode order = request("trading-edge", "GET",
+                    "/pending-order/" + URLEncoder.encode(orderId, StandardCharsets.UTF_8), null);
+            return !order.isMissingNode() && !order.isNull()
+                    && !text(order, "id", "orderId").isBlank();
+        } catch (IOException error) {
+            if (!(error.getMessage().contains("404")
+                    || error.getMessage().contains("ORDER_NOT_FOUND")
+                    || error.getMessage().contains("Order not found"))) {
+                throw error;
+            }
+            JsonNode root = request("trading-edge", "GET", "/pending-orders", null);
+            JsonNode orders = root.isArray() ? root : firstArray(root,
+                    "pendingOrders", "orders", "data");
+            if (orders == null) throw error;
+            for (JsonNode order : orders) {
+                if (orderId.equals(text(order, "id", "orderId"))) return true;
+            }
+            return false;
+        }
+    }
+
     void syncPositions() throws Exception {
         List<String> rows = new ArrayList<>();
         for (JsonNode position : openPositions().path("positions")) {
@@ -104,6 +129,10 @@ final class MatchTrader {
             if (!symbol.equals(text(row, "symbol", "instrument"))) continue;
             String id = text(row, "id", "positionId", "orderId", "dealId");
             if (id.isBlank()) continue;
+            double volume = number(row, "volume", "quantity");
+            if (!Double.isFinite(volume) || volume <= 0) {
+                throw new IOException("Closed position " + id + " has invalid volume: " + volume);
+            }
             double stopLevel = number(row, "stopLossPrice", "slPrice", "stopLoss");
             double targetLevel = number(row, "takeProfitPrice", "tpPrice", "takeProfit");
             double entryPrice = number(row, "openPrice", "entryPrice", "price");
@@ -121,11 +150,11 @@ final class MatchTrader {
                     entryPrice, stopPoints, targetPoints, stopLevel, targetLevel,
                     number(row, "closePrice"),
                     timestamp(row, "time", "closeTime", "closedAt"),
-                    number(row, "volume", "quantity"),
-                    number(row, "swap"),
-                    number(row, "commission", "commissions"),
+                    1,
+                    number(row, "swap") / volume,
+                    number(row, "commission", "commissions") / volume,
                     text(row, "result", "outcome"),
-                    number(row, "netProfit", "profit", "pnl", "profitLoss")));
+                    number(row, "netProfit", "profit", "pnl", "profitLoss") / volume));
         }
         return trades;
     }
@@ -133,10 +162,12 @@ final class MatchTrader {
     void openManagedPosition(Signal signal) throws Exception {
         double stop = signal.stopPoints() + config.spreadPoints();
         double target = stop * signal.targetPoints() / signal.stopPoints();
-        double risk = config.riskCap() * signal.riskMultiplier();
-        double volume = 1;
-        // double volume = Math.min(config.maxLots(), risk / (stop * config.pointValuePerLot()));
-        if (volume <= 0) throw new IllegalArgumentException("Calculated volume is not positive");
+        double equity = accountEquity();
+        double currentPrice = latestCandleClose();
+        double volume = equity * LEVERAGE / currentPrice;
+        if (!Double.isFinite(volume) || volume <= 0) {
+            throw new IllegalArgumentException("Calculated volume is not positive and finite");
+        }
 
         String side = signal.side() == Side.LONG ? "BUY" : "SELL";
         JsonNode opened = request("POST", "/position/open", String.format(Locale.ROOT,
@@ -162,6 +193,27 @@ final class MatchTrader {
         throw new IOException("Order accepted but no open position was returned");
     }
 
+    private double accountEquity() throws Exception {
+        JsonNode root = request("trading-edge", "GET", "/v2/balance", null);
+        double equity = number(root, "equity", "accountEquity");
+        if (equity == 0 && root.path("data").isObject()) {
+            equity = number(root.path("data"), "equity", "accountEquity");
+        }
+        if (!Double.isFinite(equity) || equity <= 0) {
+            throw new IOException("MatchTrader balance response did not contain a positive equity");
+        }
+        return equity;
+    }
+
+    private double latestCandleClose() throws Exception {
+        List<Candle> latest = candles("M1", 1);
+        double close = latest.get(latest.size() - 1).close();
+        if (!Double.isFinite(close) || close <= 0) {
+            throw new IOException("MatchTrader returned an invalid latest candle close: " + close);
+        }
+        return close;
+    }
+
     String createPendingOrder(Signal signal, PendingOrderType type, double price) throws Exception {
         if (!Double.isFinite(price) || price <= 0) {
             throw new IllegalArgumentException("Pending order price must be positive and finite");
@@ -174,7 +226,6 @@ final class MatchTrader {
                 ? executionPrice - stopDistance : executionPrice + stopDistance;
         double targetPrice = signal.side() == Side.LONG
                 ? executionPrice + targetDistance : executionPrice - targetDistance;
-        double risk = config.riskCap() * signal.riskMultiplier();
         double volume = 1;
         // double volume = Math.min(config.maxLots(),
         //         risk / (stopDistance * config.pointValuePerLot()));

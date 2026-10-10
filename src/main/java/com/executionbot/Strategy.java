@@ -17,6 +17,7 @@ final class Strategy {
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private static final int LONG_LEVEL_OFFSET = 90;
     private static final int SHORT_LEVEL_OFFSET = 110;
+    private static final long MARKET_DATA_STALE_MILLIS = 60 * 60_000L;
     private static final SetOfDays BEST_DAYS = new SetOfDays();
     private static final DateTimeFormatter DATE_FORMAT =
             DateTimeFormatter.ofPattern("dd-MM-yyyy");
@@ -61,6 +62,15 @@ final class Strategy {
                 DATE_FORMAT.format(currentTime), excludedDate ? " (EXCLUDED)" : "",
                 currentTime.getDayOfWeek(), ignoredDay ? " (IGNORED)" : "",
                 TIME_FORMAT.format(currentTime), risk));
+        if (observedAt - window.closeTime() >= MARKET_DATA_STALE_MILLIS) {
+            report.append("current windows -> latest 1hr: unavailable | latest 30m: ")
+                    .append(TIME_FORMAT.format(windowTime)).append('\n')
+                    .append(String.format(Locale.ROOT,
+                            "⛔️ MARKET CLOSED : %s %n",
+                            TIME_FORMAT.format(ZonedDateTime.ofInstant(
+                                    Instant.ofEpochMilli(window.closeTime()), IST))));
+            return report.toString();
+        }
         if (hour == null) {
             report.append("current windows -> 1hr: unavailable | 30m: ")
                     .append(TIME_FORMAT.format(windowTime)).append('\n');
@@ -120,7 +130,7 @@ final class Strategy {
                     side == Side.SHORT ? "🔴 ↓" : "🟢 ↑", side,
                     executionEntry, stopPrice, targetPrice, stopDistance, targetDistance,
                     config.spreadPoints(),
-                    avoidance.isEmpty() ? "" : " AVOID: " + avoidance));
+                    avoidance.isEmpty() ? "" : "\n⏺ AVOID: " + avoidance));
         }
         return report.toString();
     }
@@ -249,9 +259,12 @@ final class Strategy {
                 }
             } else if (index > touchIndex
                     && (side == Side.LONG ? candle.high() >= entry : candle.low() <= entry)) {
-                return;
+                if (!betweenLevels(candle, side, touch, entry)) {
+                    return;
+                }
             }
         }
+
         if (touchIndex < 0) return;
 
         ZonedDateTime time = ZonedDateTime.ofInstant(Instant.ofEpochMilli(setup.openTime()), IST);
@@ -261,6 +274,13 @@ final class Strategy {
                     minutes.get(touchIndex).openTime(),
                     touch, entry, rule.stop, rule.target, reducedRisk(time) ? 0.1 : 1.0));
         }
+    }
+
+    private boolean betweenLevels(Candle candle, Side side, double touch, double entry) {
+        double price = candle.close();
+        return side == Side.LONG
+                ? price > touch && price < entry
+                : price < touch && price > entry;
     }
 
     private void addCandidate(List<Signal> out, Side side, long start, long end,
@@ -296,7 +316,7 @@ final class Strategy {
     private String exclusionReason(Side side, Rule rule, ZonedDateTime time) {
         if (rule == null) return "no schedule rule";
         if (!BEST_DAYS.contains(side, time.getDayOfWeek())) return "day of week";
-        if (Set.of(10, 14, 15).contains(time.getDayOfMonth())) return "day of month";
+        if (Set.of(1, 2, 10, 14, 15).contains(time.getDayOfMonth())) return "day of month";
         if (side == Side.LONG && rule.stop == 70 && time.getDayOfWeek() == DayOfWeek.SATURDAY) {
             return "LONG 70-point Saturday rule";
         }

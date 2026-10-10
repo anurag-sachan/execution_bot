@@ -79,6 +79,26 @@ public final class Main {
 
         long pendingSetupEnd = Long.parseLong(state.read("pendingSetupEnd", "0"));
         if (!pendingOrderId.isBlank()) {
+            if (!broker.pendingOrderExists(pendingOrderId)) {
+                boolean retryUsed = Boolean.parseBoolean(state.read("pendingReplacementUsed", "false"));
+                state.write("pendingOrderId", "");
+                state.write("pendingSetupEnd", "0");
+                if (!retryUsed && now < pendingSetupEnd) {
+                    state.write("pendingReplacementUsed", "true");
+                    state.write("pendingReplacementSetup", state.read("pendingSignal", ""));
+                    state.write("pendingSignal", "");
+                    System.out.println("Pending STOP order disappeared before fill; "
+                            + "one replacement attempt remains for this setup.");
+                } else {
+                    state.write("processedSetup", state.read("pendingSignal", ""));
+                    state.write("pendingSignal", "");
+                    System.out.println("Pending STOP order disappeared; no further replacement "
+                            + "will be submitted for this setup.");
+                }
+                pendingOrderId = "";
+            }
+        }
+        if (!pendingOrderId.isBlank()) {
             if (now >= pendingSetupEnd) {
                 broker.cancelPendingOrder(pendingOrderId);
                 state.write("processedSetup", state.read("pendingSignal", ""));
@@ -91,6 +111,9 @@ public final class Main {
         Signal signal = strategy.pendingSignal(minutes, halfHours, hours, now);
         if (signal == null) return strategy.touchConditionMet(minutes, halfHours, hours, now);
         if (signal.key().equals(state.read("processedSetup", ""))) return false;
+        if (!signal.key().equals(state.read("pendingReplacementSetup", ""))) {
+            state.write("pendingReplacementUsed", "false");
+        }
         // if (!relativeStrength.allows(signal)) {
         //     System.out.println("🗣️ Relative-strength rejected setup; no STOP ORDER submitted.");
         //     return;
