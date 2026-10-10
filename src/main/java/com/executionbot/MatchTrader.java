@@ -34,6 +34,7 @@ final class MatchTrader {
     private String systemUuid;
     private String apiToken;
     private String cookie;
+    private boolean closedPositionHistoryUnavailable;
 
     MatchTrader(BotConfig config) {
         this.config = config;
@@ -112,6 +113,8 @@ final class MatchTrader {
     }
 
     List<ClosedTrade> closedPositions(String symbol) throws Exception {
+        if (closedPositionHistoryUnavailable) return List.of();
+
         Instant to = Instant.now();
         Instant from = to.minusSeconds(90L * 24L * 60L * 60L);
         String payload = String.format(Locale.ROOT,
@@ -119,7 +122,15 @@ final class MatchTrader {
                         + "\"symbolCalcTypes\":[\"FOREX\",\"CFD\",\"FOREXCFD\"]}",
                 DateTimeFormatter.ISO_INSTANT.format(from),
                 DateTimeFormatter.ISO_INSTANT.format(to));
-        JsonNode root = request("trading-edge", "POST", "/closed-positions", payload);
+        JsonNode root;
+        try {
+            root = request("trading-edge", "POST", "/closed-positions", payload);
+        } catch (IOException error) {
+            if (!isNotFound(error)) throw error;
+            closedPositionHistoryUnavailable = true;
+            System.err.println("☇ - closed-position history is unavailable, executed IDs are preserved");
+            return List.of();
+        }
         JsonNode rows = root.isArray() ? root : firstArray(root,
                 "operations", "closedPositions", "positions", "data");
         List<ClosedTrade> trades = new ArrayList<>();
@@ -223,7 +234,6 @@ final class MatchTrader {
                 ? executionPrice - stopDistance : executionPrice + stopDistance;
         double targetPrice = signal.side() == Side.LONG
                 ? executionPrice + targetDistance : executionPrice - targetDistance;
-        double risk = config.riskCap() * signal.riskMultiplier();
         double equity = accountEquity();
         double currentPrice = latestCandleClose();
         double volume = equity * 2.0 / currentPrice;
@@ -453,6 +463,12 @@ final class MatchTrader {
 
     private static String escape(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static boolean isNotFound(IOException error) {
+        String message = error.getMessage();
+        return message != null && (message.contains("HTTP 404")
+                || message.contains("Cannot POST /trading-edge"));
     }
 }
 
