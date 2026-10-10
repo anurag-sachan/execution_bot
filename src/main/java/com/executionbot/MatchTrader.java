@@ -27,7 +27,6 @@ final class MatchTrader {
     private final BotConfig config;
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
-    private static final double LEVERAGE = 2.0;
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(CONNECT_TIMEOUT)
             .build();
@@ -164,10 +163,8 @@ final class MatchTrader {
         double target = stop * signal.targetPoints() / signal.stopPoints();
         double equity = accountEquity();
         double currentPrice = latestCandleClose();
-        double volume = equity * LEVERAGE / currentPrice;
-        if (!Double.isFinite(volume) || volume <= 0) {
-            throw new IllegalArgumentException("Calculated volume is not positive and finite");
-        }
+        double volume = equity * 2.0 / currentPrice;
+        if (volume <= 0) throw new IllegalArgumentException("Calculated volume is not positive");
 
         String side = signal.side() == Side.LONG ? "BUY" : "SELL";
         JsonNode opened = request("POST", "/position/open", String.format(Locale.ROOT,
@@ -226,11 +223,13 @@ final class MatchTrader {
                 ? executionPrice - stopDistance : executionPrice + stopDistance;
         double targetPrice = signal.side() == Side.LONG
                 ? executionPrice + targetDistance : executionPrice - targetDistance;
-        double volume = 1;
-        // double volume = Math.min(config.maxLots(),
-        //         risk / (stopDistance * config.pointValuePerLot()));
-        if (volume <= 0) {
-            throw new IllegalArgumentException("Calculated pending-order volume is not positive");
+        double risk = config.riskCap() * signal.riskMultiplier();
+        double equity = accountEquity();
+        double currentPrice = latestCandleClose();
+        double volume = equity * 2.0 / currentPrice;
+        if (!Double.isFinite(volume) || volume <= 0) {
+            throw new IllegalArgumentException(
+                    "Calculated pending-order volume is not positive and finite");
         }
 
         String side = signal.side() == Side.LONG ? "BUY" : "SELL";

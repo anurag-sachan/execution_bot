@@ -17,9 +17,6 @@ no candles are constructed from lower timeframes.
 Broker state is synchronized to `data/OpenPositions.csv`, and `data/database.txt` stores
 the risk cap and the last submitted signal. Requests retry with backoff and refresh the
 MatchTrader login when authentication expires.
-Managed market positions use volume equal to `equity * 2 / latest M1 candle close`, where
-equity comes from the MatchTrader `/v2/balance` endpoint. Closed-position CSV entries are
-normalized to the equivalent of one volume, including swap, commission, and net profit.
 
 After a configured 30-minute touch level is observed, the bot submits one
 MatchTrader STOP pending order at the 1-hour entry level. The pending order is
