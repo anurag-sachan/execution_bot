@@ -23,8 +23,6 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         LocalState state = new LocalState(Path.of("data", "database.txt"));
         BotConfig config = BotConfig.fromEnvironment();
-        config = config.withRiskCap(Integer.parseInt(
-                state.read("riskCap", Integer.toString(config.riskCap()))));
         MatchTrader broker = new MatchTrader(config);
         Strategy strategy = new Strategy(config);
         RelativeStrengthFilter relativeStrength = new RelativeStrengthFilter();
@@ -128,13 +126,6 @@ public final class Main {
 
     private static void syncClosedPositions(BotConfig config, LocalState state,
                                              MatchTrader broker) throws Exception {
-        Set<String> synced = new HashSet<>();
-        String saved = state.read("closedPositionIds", "");
-        if (!saved.isBlank()) {
-            for (String id : saved.split(",")) {
-                if (!id.isBlank()) synced.add(id);
-            }
-        }
         Path file = Path.of("data", "closedPosition.csv");
         Files.createDirectories(file.getParent());
         if (!Files.exists(file)) {
@@ -145,6 +136,7 @@ public final class Main {
                             + System.lineSeparator(),
                     StandardOpenOption.CREATE);
         }
+        Set<String> synced = csvPositionIds(file);
         Set<String> executed = stateIds(state, "executedPositionIds");
         for (ClosedTrade trade : broker.closedPositions(config.symbol())) {
             if (!executed.contains(trade.id())) continue;
@@ -167,6 +159,18 @@ public final class Main {
             Files.writeString(file, row, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         }
         state.write("closedPositionIds", String.join(",", synced));
+    }
+
+    private static Set<String> csvPositionIds(Path file) throws IOException {
+        Set<String> ids = new HashSet<>();
+        for (String line : Files.readAllLines(file)) {
+            String[] columns = line.split(",", -1);
+            if (columns.length > 1 && !"ID".equalsIgnoreCase(columns[1])) {
+                String id = columns[1].trim();
+                if (!id.isBlank()) ids.add(id);
+            }
+        }
+        return ids;
     }
 
     private static void clearPendingOrder(LocalState state) throws IOException {

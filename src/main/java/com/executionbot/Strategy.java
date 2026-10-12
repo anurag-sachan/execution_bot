@@ -55,13 +55,12 @@ final class Strategy {
                 Instant.ofEpochMilli(observedAt), IST);
         boolean excludedDate = Set.of(1, 2, 10, 14, 15).contains(currentTime.getDayOfMonth());
         boolean ignoredDay = !BEST_DAYS.contains(Side.LONG, currentTime.getDayOfWeek());
-        double risk = config.riskCap() * (reducedRisk(windowTime) ? 0.1 : 1.0);
         StringBuilder report = new StringBuilder();
         report.append(String.format(Locale.ROOT,
-                "%n---------- %s%s, %s%s, %s (IST) [$%.2f] ----------%n",
+                "%n---------- %s%s, %s%s, %s (IST) ----------%n",
                 DATE_FORMAT.format(currentTime), excludedDate ? " (EXCLUDED)" : "",
                 currentTime.getDayOfWeek(), ignoredDay ? " (IGNORED)" : "",
-                TIME_FORMAT.format(currentTime), risk));
+                TIME_FORMAT.format(currentTime)));
         if (observedAt - window.closeTime() >= MARKET_DATA_STALE_MILLIS) {
             report.append("current windows -> latest 1hr: unavailable | latest 30m: ")
                     .append(TIME_FORMAT.format(windowTime)).append('\n')
@@ -121,7 +120,7 @@ final class Strategy {
                 Double roundLevel = roundFilterLevel(side, entry, rule.stop);
                 if (roundLevel != null) {
                     avoidance = String.format(Locale.ROOT,
-                            "\n ⏺ ROUND NUMBER IN SL range : %.0f", roundLevel);
+                            "ROUND NUMBER IN SL range : %.0f", roundLevel);
                 }
             }
             report.append(String.format(Locale.ROOT,

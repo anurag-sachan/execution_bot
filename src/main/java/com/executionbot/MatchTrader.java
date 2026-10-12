@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Locale;
 
 final class MatchTrader {
+    private static final double PENDING_ORDER_RISK_CAP = 200.0;
+
     enum PendingOrderType {
         STOP, LIMIT
     }
@@ -34,7 +36,6 @@ final class MatchTrader {
     private String systemUuid;
     private String apiToken;
     private String cookie;
-    private boolean closedPositionHistoryUnavailable;
 
     MatchTrader(BotConfig config) {
         this.config = config;
@@ -81,19 +82,22 @@ final class MatchTrader {
             return !order.isMissingNode() && !order.isNull()
                     && !text(order, "id", "orderId").isBlank();
         } catch (IOException error) {
-            if (!(error.getMessage().contains("404")
-                    || error.getMessage().contains("ORDER_NOT_FOUND")
-                    || error.getMessage().contains("Order not found"))) {
+            if (!isPendingOrderLookupUnavailable(error)) {
                 throw error;
             }
-            JsonNode root = request("trading-edge", "GET", "/pending-orders", null);
-            JsonNode orders = root.isArray() ? root : firstArray(root,
-                    "pendingOrders", "orders", "data");
-            if (orders == null) throw error;
-            for (JsonNode order : orders) {
-                if (orderId.equals(text(order, "id", "orderId"))) return true;
+            try {
+                JsonNode root = request("trading-edge", "GET", "/pending-orders", null);
+                JsonNode orders = root.isArray() ? root : firstArray(root,
+                        "pendingOrders", "orders", "data");
+                if (orders == null) throw error;
+                for (JsonNode order : orders) {
+                    if (orderId.equals(text(order, "id", "orderId"))) return true;
+                }
+                return false;
+            } catch (IOException fallbackError) {
+                fallbackError.addSuppressed(error);
+                throw fallbackError;
             }
-            return false;
         }
     }
 
@@ -113,8 +117,6 @@ final class MatchTrader {
     }
 
     List<ClosedTrade> closedPositions(String symbol) throws Exception {
-        if (closedPositionHistoryUnavailable) return List.of();
-
         Instant to = Instant.now();
         Instant from = to.minusSeconds(90L * 24L * 60L * 60L);
         String payload = String.format(Locale.ROOT,
@@ -127,8 +129,6 @@ final class MatchTrader {
             root = request("trading-edge", "POST", "/closed-positions", payload);
         } catch (IOException error) {
             if (!isNotFound(error)) throw error;
-            closedPositionHistoryUnavailable = true;
-            System.err.println("☇ - closed-position history is unavailable, executed IDs are preserved");
             return List.of();
         }
         JsonNode rows = root.isArray() ? root : firstArray(root,
@@ -169,38 +169,6 @@ final class MatchTrader {
         return trades;
     }
 
-    void openManagedPosition(Signal signal) throws Exception {
-        double stop = signal.stopPoints() + config.spreadPoints();
-        double target = stop * signal.targetPoints() / signal.stopPoints();
-        double equity = accountEquity();
-        double currentPrice = latestCandleClose();
-        double volume = equity * 2.0 / currentPrice;
-        if (volume <= 0) throw new IllegalArgumentException("Calculated volume is not positive");
-
-        String side = signal.side() == Side.LONG ? "BUY" : "SELL";
-        JsonNode opened = request("POST", "/position/open", String.format(Locale.ROOT,
-                "{\"instrument\":\"%s\",\"volume\":%.8f,\"orderSide\":\"%s\",\"isMobile\":false}",
-                config.symbol(), volume, side));
-        if (opened.path("orderId").asText("").isBlank()) {
-            throw new IOException("MatchTrader did not return an orderId");
-        }
-
-        for (JsonNode position : openPositions().path("positions")) {
-            if (!config.symbol().equals(position.path("symbol").asText())) continue;
-            double openPrice = position.path("openPrice").asDouble();
-            double stopPrice = signal.side() == Side.LONG ? openPrice - stop : openPrice + stop;
-            double targetPrice = signal.side() == Side.LONG ? openPrice + target : openPrice - target;
-            request("POST", "/position/edit", String.format(Locale.ROOT,
-                    "{\"instrument\":\"%s\",\"id\":\"%s\",\"orderSide\":\"%s\",\"volume\":%.8f,\"slPrice\":%.8f,\"tpPrice\":%.8f,\"isMobile\":false}",
-                    config.symbol(), position.path("id").asText(), position.path("side").asText(),
-                    position.path("volume").asDouble(), stopPrice, targetPrice));
-            System.out.printf("Opened %s volume=%.8f SL=%.2f TP=%.2f%n",
-                    side, volume, stopPrice, targetPrice);
-            return;
-        }
-        throw new IOException("Order accepted but no open position was returned");
-    }
-
     private double accountEquity() throws Exception {
         JsonNode root = request("trading-edge", "GET", "/v2/balance", null);
         double equity = number(root, "equity", "accountEquity");
@@ -236,7 +204,11 @@ final class MatchTrader {
                 ? executionPrice + targetDistance : executionPrice - targetDistance;
         double equity = accountEquity();
         double currentPrice = latestCandleClose();
-        double volume = equity * 2.0 / currentPrice;
+        double maxLot = equity * 2.0 / currentPrice;
+        double riskVolume = PENDING_ORDER_RISK_CAP
+                / (stopDistance * config.pointValuePerLot());
+        double volume = Math.min(maxLot, riskVolume);
+        volume = Math.floor(volume * 100.0) / 100.0;
         if (!Double.isFinite(volume) || volume <= 0) {
             throw new IllegalArgumentException(
                     "Calculated pending-order volume is not positive and finite");
@@ -469,6 +441,14 @@ final class MatchTrader {
         String message = error.getMessage();
         return message != null && (message.contains("HTTP 404")
                 || message.contains("Cannot POST /trading-edge"));
+    }
+
+    private static boolean isPendingOrderLookupUnavailable(IOException error) {
+        String message = error.getMessage();
+        return message != null && (message.contains("HTTP 404")
+                || message.contains("HTTP 500")
+                || message.contains("ORDER_NOT_FOUND")
+                || message.contains("Order not found"));
     }
 }
 

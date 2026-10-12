@@ -31,8 +31,6 @@ commit credentials:
 export MATCHTRADER_EMAIL='...'
 export MATCHTRADER_PASSWORD='...'
 export MATCHTRADER_ACCOUNT_ID='...'
-export BOT_RISK_CAP='1000'
-export BOT_MAX_LOTS='2'
 cd execution_bot
 mvn package dependency:build-classpath -Dmdep.outputFile=cp.txt
 java -cp "target/classes:$(cat cp.txt)" com.executionbot.Main

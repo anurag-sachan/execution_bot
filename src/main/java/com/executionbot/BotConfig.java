@@ -7,15 +7,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 record BotConfig(String symbol, String matchTraderBaseUrl,
-             String email, String password, String tradingAccountId,
-                 String systemUuid, String tradingApiToken, String cookie,
-                 int riskCap, double pointValuePerLot, double maxLots, double spreadPoints,
+                 String email, String password, String tradingAccountId,
+                     String systemUuid, String tradingApiToken, String cookie,
+                 double pointValuePerLot, double spreadPoints,
                  int pollSeconds, int marketCacheMinutes, int maxRetries) {
-    BotConfig withRiskCap(int value) {
-        return new BotConfig(symbol, matchTraderBaseUrl, email, password,
-            tradingAccountId, systemUuid, tradingApiToken, cookie, value,
-                pointValuePerLot, maxLots, spreadPoints, pollSeconds, marketCacheMinutes, maxRetries);
-    }
     static BotConfig fromEnvironment() {
         Map<String, String> e = new HashMap<>(loadDotEnv());
         e.putAll(System.getenv());
@@ -28,9 +23,7 @@ record BotConfig(String symbol, String matchTraderBaseUrl,
                 value(e, "", "MATCHTRADER_SYSTEM_UUID", "systemUuid"),
                 value(e, "", "MATCHTRADER_API_TOKEN", "tradingApiToken"),
                 value(e, "", "MATCHTRADER_COOKIE", "Cookie"),
-                integer(e, "BOT_RISK_CAP", 4000),
                 decimal(e, "BOT_POINT_VALUE_PER_LOT", 1.0),
-                decimal(e, "BOT_MAX_LOTS", 2.0),
                 decimal(e, "BOT_SPREAD_POINTS", 15.0),
                 integer(e, "BOT_POLL_SECONDS", 15),
                 integer(e, "BOT_MARKET_CACHE_MINUTES", 24 * 60),
