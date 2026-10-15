@@ -14,10 +14,13 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.Duration;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 final class MatchTrader {
     private static final double PENDING_ORDER_RISK_CAP = 200.0;
@@ -208,7 +211,12 @@ final class MatchTrader {
         double riskVolume = PENDING_ORDER_RISK_CAP
                 / (stopDistance * config.pointValuePerLot());
         double volume = Math.min(maxLot, riskVolume);
-        volume = Math.floor(volume * 100.0) / 100.0;
+        // volume = Math.floor(volume * 100.0) / 100.0;
+        ZonedDateTime istNow = ZonedDateTime.now(ZoneId.of("Asia/Kolkata"));
+        boolean reducedVolumeTime = (istNow.getHour() == 4 && istNow.getMinute() == 30)
+                || (istNow.getHour() == 12 && istNow.getMinute() == 0)
+                || (istNow.getHour() == 17 && istNow.getMinute() == 0);
+        volume = reducedVolumeTime ? 0.1 : 1.0;
         if (!Double.isFinite(volume) || volume <= 0) {
             throw new IllegalArgumentException(
                     "Calculated pending-order volume is not positive and finite");
@@ -246,6 +254,95 @@ final class MatchTrader {
             System.out.println("Pending STOP order " + orderId
                     + " was already cancelled or filled; clearing local state.");
         }
+    }
+
+    double offsetMultiplier() throws Exception {
+        List<Candle> brokerCandles = new ArrayList<>(candles("M1", 23));
+        JsonNode root = requestAbsolute("https://api.binance.com/api/v3/klines"
+                + "?symbol=BTCUSDT&interval=1m&limit=23");
+        if (!root.isArray()) throw new IOException("Binance returned invalid klines data");
+        Map<Long, double[]> binanceRanges = new java.util.HashMap<>();
+        for (JsonNode row : root) {
+            if (!row.isArray() || row.size() < 5) continue;
+            double high = Double.parseDouble(row.get(2).asText());
+            double low = Double.parseDouble(row.get(3).asText());
+            binanceRanges.put(row.get(0).asLong(), new double[]{high, low});
+        }
+        // Drop the newest candle from each feed before joining; either may still be forming.
+        if (!brokerCandles.isEmpty()) brokerCandles.remove(brokerCandles.size() - 1);
+        if (!binanceRanges.isEmpty()) {
+            long newestBinanceTime = binanceRanges.keySet().stream()
+                    .mapToLong(Long::longValue).max().orElseThrow();
+            binanceRanges.remove(newestBinanceTime);
+        }
+
+        List<CandleRanges> ranges = new ArrayList<>();
+        for (Candle candle : brokerCandles) {
+            double[] binanceRange = binanceRanges.get(candle.openTime());
+            if (binanceRange != null) {
+                if (binanceRange[0] >= binanceRange[1] && candle.high() >= candle.low()) {
+                    ranges.add(new CandleRanges(candle.high(), candle.low(),
+                            binanceRange[0], binanceRange[1]));
+                }
+            }
+        }
+        if (ranges.size() < 22) {
+            throw new IOException("Need 22 timestamp-matched closed candles from MatchTrader "
+                    + "and Binance; got " + ranges.size());
+        }
+
+        double twentyCandleRatioSecondLast = aggregateRangeRatio(ranges, 20, 0);
+        double twentyCandleRatioThirdLast = aggregateRangeRatio(ranges, 20, 1);
+        double twentyCandleRatioFourthLast = aggregateRangeRatio(ranges, 20, 2);
+        double multiplier = java.util.stream.Stream.of(
+                        twentyCandleRatioSecondLast,
+                        twentyCandleRatioThirdLast,
+                        twentyCandleRatioFourthLast)
+                .distinct()
+                .mapToDouble(Double::doubleValue)
+                .average()
+                .orElseThrow(() -> new IOException("No distinct multiplier ratios available"));
+        if (!Double.isFinite(multiplier) || multiplier <= 0) {
+            throw new IOException("Calculated invalid entry offset multiplier: " + multiplier);
+        }
+        return multiplier;
+    }
+
+    private static double aggregateRangeRatio(List<CandleRanges> ranges, int count,
+                                              int candlesBackFromLatest)
+            throws IOException {
+        double brokerHighest = Double.NEGATIVE_INFINITY;
+        double brokerLowest = Double.POSITIVE_INFINITY;
+        double binanceHighest = Double.NEGATIVE_INFINITY;
+        double binanceLowest = Double.POSITIVE_INFINITY;
+        int end = ranges.size() - candlesBackFromLatest;
+        int start = end - count;
+        for (int index = start; index < end; index++) {
+            CandleRanges range = ranges.get(index);
+            brokerHighest = Math.max(brokerHighest, range.brokerHigh());
+            brokerLowest = Math.min(brokerLowest, range.brokerLow());
+            binanceHighest = Math.max(binanceHighest, range.binanceHigh());
+            binanceLowest = Math.min(binanceLowest, range.binanceLow());
+        }
+        double binanceSpan = binanceHighest - binanceLowest;
+        if (binanceSpan <= 0) {
+            throw new IOException("Cannot calculate multiplier from zero Binance window span");
+        }
+        return (brokerHighest - brokerLowest) / binanceSpan;
+    }
+
+    private record CandleRanges(double brokerHigh, double brokerLow,
+                                double binanceHigh, double binanceLow) {
+    }
+
+    private JsonNode requestAbsolute(String url) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(REQUEST_TIMEOUT).GET().build();
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IOException("Binance klines request failed with HTTP " + response.statusCode());
+        }
+        return mapper.readTree(response.body());
     }
 
     List<Candle> candles(String interval, int amount) throws Exception {

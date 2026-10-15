@@ -15,8 +15,8 @@ import java.util.Set;
 
 final class Strategy {
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
-    private static final int LONG_LEVEL_OFFSET = 90;
-    private static final int SHORT_LEVEL_OFFSET = 110;
+    private static final double LONG_LEVEL_OFFSET = 90;
+    private static final double SHORT_LEVEL_OFFSET = 110;
     private static final long MARKET_DATA_STALE_MILLIS = 60 * 60_000L;
     private static final SetOfDays BEST_DAYS = new SetOfDays();
     private static final DateTimeFormatter DATE_FORMAT =
@@ -39,7 +39,8 @@ final class Strategy {
     }
 
     String currentWindowReport(List<Candle> minutes, List<Candle> halfHours,
-                               List<Candle> hours, long observedAt, Side openPositionSide) {
+                               List<Candle> hours, long observedAt, Side openPositionSide,
+                               double multiplier) {
         if (halfHours.isEmpty()) {
             return "30m window: unavailable (no 30-minute candles)";
         }
@@ -90,13 +91,13 @@ final class Strategy {
                 .append(TIME_FORMAT.format(ZonedDateTime.ofInstant(
                         Instant.ofEpochMilli(hour.openTime()), IST)))
                 .append(" | 30m: ").append(TIME_FORMAT.format(windowTime)).append('\n')
-                .append(touchStatus(minutes, window, previous, hour, openPositionSide))
+                .append(touchStatus(minutes, window, previous, hour, openPositionSide, multiplier))
                 .append("---------------\n");
         report.append(String.format(Locale.ROOT,
                 "SHORT ↓ 1H_entry_level=%.2f 30m_touch_level=%.2f%n"
                         + "LONG  ↑ 1H_entry_level=%.2f 30m_touch_level=%.2f%n",
-                hour.open() + SHORT_LEVEL_OFFSET, previous.low() + 360,
-                hour.open() - LONG_LEVEL_OFFSET, previous.high() - 360));
+                hour.open() + SHORT_LEVEL_OFFSET * multiplier, previous.low() + 360,
+                hour.open() - LONG_LEVEL_OFFSET * multiplier, previous.high() - 360));
         report.append("---------------\n");
         for (Side side : Side.values()) {
             Rule rule = rule(side, windowTime);
@@ -106,7 +107,8 @@ final class Strategy {
                 continue;
             }
             double entry = side == Side.LONG
-                    ? hour.open() - LONG_LEVEL_OFFSET : hour.open() + SHORT_LEVEL_OFFSET;
+                    ? hour.open() - LONG_LEVEL_OFFSET * multiplier
+                    : hour.open() + SHORT_LEVEL_OFFSET * multiplier;
             double stopDistance = effectiveStop(rule.stop);
             double targetDistance = effectiveTarget(rule.stop, rule.target);
             double executionEntry = side == Side.LONG ? entry + config.spreadPoints() : entry;
@@ -135,14 +137,14 @@ final class Strategy {
     }
 
     private String touchStatus(List<Candle> minutes, Candle setup, Candle previous,
-                               Candle hour, Side openPositionSide) {
+                               Candle hour, Side openPositionSide, double multiplier) {
         if (openPositionSide != null) {
             return "⚪️ OPEN POSITION : " + openPositionSide + "\n";
         }
         double longTouch = previous.high() - 360;
         double shortTouch = previous.low() + 360;
-        double longEntry = hour.open() - LONG_LEVEL_OFFSET;
-        double shortEntry = hour.open() + SHORT_LEVEL_OFFSET;
+        double longEntry = hour.open() - LONG_LEVEL_OFFSET * multiplier;
+        double shortEntry = hour.open() + SHORT_LEVEL_OFFSET * multiplier;
         Candle longTouchCandle = null;
         Candle shortTouchCandle = null;
         for (Candle candle : minutes) {
@@ -170,7 +172,7 @@ final class Strategy {
     }
 
     Signal latestSignal(List<Candle> minutes, List<Candle> halfHours,
-                        List<Candle> hours, long closedMinute) {
+                        List<Candle> hours, long closedMinute, double multiplier) {
         if (halfHours.size() < 2 || minutes.isEmpty()) {
             return null;
         }
@@ -188,15 +190,15 @@ final class Strategy {
         }
         List<Signal> candidates = new ArrayList<>();
         addCandidate(candidates, Side.LONG, setupStart, setupEnd,
-                previous.high() - 360, hour.open() - LONG_LEVEL_OFFSET, minutes);
+                previous.high() - 360, hour.open() - LONG_LEVEL_OFFSET * multiplier, minutes);
         addCandidate(candidates, Side.SHORT, setupStart, setupEnd,
-                previous.low() + 360, hour.open() + SHORT_LEVEL_OFFSET, minutes);
+                previous.low() + 360, hour.open() + SHORT_LEVEL_OFFSET * multiplier, minutes);
         return candidates.stream().filter(s -> s.entryTime() <= closedMinute)
                 .max(java.util.Comparator.comparingLong(Signal::entryTime)).orElse(null);
     }
 
     Signal pendingSignal(List<Candle> minutes, List<Candle> halfHours,
-                         List<Candle> hours, long observedAt) {
+                         List<Candle> hours, long observedAt, double multiplier) {
         if (halfHours.size() < 2 || minutes.isEmpty()) return null;
         Candle setup = halfHours.get(halfHours.size() - 1);
         if (setup.openTime() + 30 * 60_000L <= observedAt) return null;
@@ -207,13 +209,13 @@ final class Strategy {
 
         List<Signal> candidates = new ArrayList<>();
         double longTouchLevel = previous.high() - 360;
-        double longEntryLevel = hour.open() - LONG_LEVEL_OFFSET;
+        double longEntryLevel = hour.open() - LONG_LEVEL_OFFSET * multiplier;
         if (longTouchLevel < longEntryLevel) {
             addPendingCandidate(candidates, Side.LONG, setup, longTouchLevel,
                     longEntryLevel, minutes);
         }
         double shortTouchLevel = previous.low() + 360;
-        double shortEntryLevel = hour.open() + SHORT_LEVEL_OFFSET;
+        double shortEntryLevel = hour.open() + SHORT_LEVEL_OFFSET * multiplier;
         if (shortTouchLevel > shortEntryLevel) {
             addPendingCandidate(candidates, Side.SHORT, setup, shortTouchLevel,
                     shortEntryLevel, minutes);
@@ -223,7 +225,7 @@ final class Strategy {
     }
 
     boolean touchConditionMet(List<Candle> minutes, List<Candle> halfHours,
-                              List<Candle> hours, long observedAt) {
+                              List<Candle> hours, long observedAt, double multiplier) {
         if (halfHours.size() < 2 || minutes.isEmpty()) return false;
         Candle setup = halfHours.get(halfHours.size() - 1);
         if (setup.openTime() + 30 * 60_000L <= observedAt) return false;
@@ -232,9 +234,9 @@ final class Strategy {
         Candle hour = hours.stream().filter(c -> c.openTime() == hourStart).findFirst().orElse(null);
         if (hour == null) return false;
         double longTouch = previous.high() - 360;
-        double longEntry = hour.open() - LONG_LEVEL_OFFSET;
+        double longEntry = hour.open() - LONG_LEVEL_OFFSET * multiplier;
         double shortTouch = previous.low() + 360;
-        double shortEntry = hour.open() + SHORT_LEVEL_OFFSET;
+        double shortEntry = hour.open() + SHORT_LEVEL_OFFSET * multiplier;
         for (Candle candle : minutes) {
             if (candle.openTime() < setup.openTime()) continue;
             if (candle.openTime() >= setup.closeTime()) break;
@@ -365,14 +367,14 @@ final class Strategy {
             {8,70,300},{9,70,300},{10,70,600},{11,270,300},{12,270,300},
             {13,270,300},{14,70,300},{15,70,300},{16,70,300},{17,70,300},
             {19,70,300},{20,70,300},{23,70,300},{24,70,300},{25,70,300},
-            {32,70,300},{33,70,300},{35,70,300},{36,70,300},{38,70,300},
+            {32,70,300},{33,70,300},{35,70,300},{38,70,300},
             {40,70,800},{41,70,300},{43,70,300},{44,70,300},{45,270,300},
             {46,70,300},{47,70,300}});
     private static final Map<Integer, Rule> SHORT_RULES = schedule(new int[][]{
             {0,220,1500},{1,50,1500},{3,50,1500},{6,50,680},{8,50,680},
             {11,50,680},{12,50,1500},{13,50,400},{14,50,1500},{15,50,400},
             {17,50,1500},{19,50,300},{22,50,680},{25,50,680},{27,50,400},
-            {29,50,1500},{33,50,680},{34,50,1500},{35,220,1500},{36,50,1500},
+            {29,50,1500},{33,50,680},{34,50,1500},{35,220,1500},
             {37,50,1500},{38,50,680},{39,50,680},{40,50,400},{41,50,1500},
             {43,50,400},{44,50,400},{45,50,400},{47,50,680}});
 

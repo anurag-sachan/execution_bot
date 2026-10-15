@@ -64,13 +64,14 @@ public final class Main {
         }
 
         long now = Instant.now().toEpochMilli();
+        double multiplier = broker.offsetMultiplier();
         List<Candle> minutes = broker.candles("M1", 60);
         List<Candle> halfHours = broker.candles("M30", 3);
         List<Candle> hours = broker.candles("H1", 2);
         long currentMinute = Math.floorDiv(now, 60_000L);
         if (currentMinute != lastReportedMinute) {
             System.out.print(strategy.currentWindowReport(
-                    minutes, halfHours, hours, now, openPositionSide));
+                    minutes, halfHours, hours, now, openPositionSide, multiplier));
             System.out.print(relativeStrength.currentSetupReport(minutes, halfHours, hours, now));
             lastReportedMinute = currentMinute;
         }
@@ -106,8 +107,10 @@ public final class Main {
             return false;
         }
 
-        Signal signal = strategy.pendingSignal(minutes, halfHours, hours, now);
-        if (signal == null) return strategy.touchConditionMet(minutes, halfHours, hours, now);
+        Signal signal = strategy.pendingSignal(minutes, halfHours, hours, now, multiplier);
+        if (signal == null) {
+            return strategy.touchConditionMet(minutes, halfHours, hours, now, multiplier);
+        }
         if (signal.key().equals(state.read("processedSetup", ""))) return false;
         if (!signal.key().equals(state.read("pendingReplacementSetup", ""))) {
             state.write("pendingReplacementUsed", "false");
