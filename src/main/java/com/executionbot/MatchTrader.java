@@ -273,9 +273,9 @@ final class MatchTrader {
     }
 
     double offsetMultiplier() throws Exception {
-        List<Candle> brokerCandles = new ArrayList<>(candles("M1", 23));
+        List<Candle> brokerCandles = new ArrayList<>(candles("M1", 30));
         JsonNode root = requestAbsolute("https://api.binance.com/api/v3/klines"
-                + "?symbol=BTCUSDT&interval=1m&limit=23");
+                + "?symbol=BTCUSDT&interval=1m&limit=30");
         if (!root.isArray()) throw new IOException("Binance returned invalid klines data");
         Map<Long, double[]> binanceRanges = new java.util.HashMap<>();
         for (JsonNode row : root) {
