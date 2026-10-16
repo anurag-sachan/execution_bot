@@ -52,15 +52,35 @@ public final class Main {
         }
         String pendingOrderId = state.read("pendingOrderId", "");
         broker.syncPositions();
+        List<String> openPositionIds = broker.openPositionIds(config.symbol());
         Side openPositionSide = broker.openPositionSide(config.symbol());
-        if (!pendingOrderId.isBlank() && openPositionSide != null) {
-            System.out.println("Tracked STOP order filled; open position synchronized.");
-            for (String positionId : broker.openPositionIds(config.symbol())) {
-                addStateId(state, "executedPositionIds", positionId);
+        for (String positionId : openPositionIds) {
+            addStateId(state, "executedPositionIds", positionId);
+        }
+        List<String> brokerPendingOrderIds = broker.pendingOrderIds(config.symbol());
+        if (!openPositionIds.isEmpty() || openPositionSide != null) {
+            Set<String> ordersToCancel = new HashSet<>(brokerPendingOrderIds);
+            if (!pendingOrderId.isBlank()) ordersToCancel.add(pendingOrderId);
+            for (String orderId : ordersToCancel) broker.cancelPendingOrder(orderId);
+            if (!pendingOrderId.isBlank()) {
+                markProcessedSetup(state, state.read("pendingSignal", ""));
+                clearPendingOrder(state);
             }
-            state.write("processedSetup", state.read("pendingSignal", ""));
-            clearPendingOrder(state);
+            System.out.println("Open position exists; new entries are blocked and pending orders canceled.");
             return false;
+        }
+        if (pendingOrderId.isBlank() && !brokerPendingOrderIds.isEmpty()) {
+            for (String orderId : brokerPendingOrderIds) broker.cancelPendingOrder(orderId);
+            long currentSetupStart = Math.floorDiv(Instant.now().toEpochMilli(), 30 * 60_000L)
+                    * 30 * 60_000L;
+            state.write("processedSetupStart", Long.toString(currentSetupStart));
+            System.out.println("Canceled untracked pending order(s); setup is blocked for this window.");
+            return false;
+        }
+        if (!pendingOrderId.isBlank()) {
+            for (String orderId : brokerPendingOrderIds) {
+                if (!pendingOrderId.equals(orderId)) broker.cancelPendingOrder(orderId);
+            }
         }
 
         long now = Instant.now().toEpochMilli();
@@ -79,28 +99,16 @@ public final class Main {
         long pendingSetupEnd = Long.parseLong(state.read("pendingSetupEnd", "0"));
         if (!pendingOrderId.isBlank()) {
             if (!broker.pendingOrderExists(pendingOrderId)) {
-                boolean retryUsed = Boolean.parseBoolean(state.read("pendingReplacementUsed", "false"));
-                state.write("pendingOrderId", "");
-                state.write("pendingSetupEnd", "0");
-                if (!retryUsed && now < pendingSetupEnd) {
-                    state.write("pendingReplacementUsed", "true");
-                    state.write("pendingReplacementSetup", state.read("pendingSignal", ""));
-                    state.write("pendingSignal", "");
-                    System.out.println("Pending STOP order disappeared before fill; "
-                            + "one replacement attempt remains for this setup.");
-                } else {
-                    state.write("processedSetup", state.read("pendingSignal", ""));
-                    state.write("pendingSignal", "");
-                    System.out.println("Pending STOP order disappeared; no further replacement "
-                            + "will be submitted for this setup.");
-                }
+                markProcessedSetup(state, state.read("pendingSignal", ""));
+                clearPendingOrder(state);
                 pendingOrderId = "";
+                System.out.println("Pending STOP order disappeared; this setup will not be retried.");
             }
         }
         if (!pendingOrderId.isBlank()) {
             if (now >= pendingSetupEnd) {
                 broker.cancelPendingOrder(pendingOrderId);
-                state.write("processedSetup", state.read("pendingSignal", ""));
+                markProcessedSetup(state, state.read("pendingSignal", ""));
                 clearPendingOrder(state);
                 System.out.println("\n◇ Canceled pending STOP order : setup window closed.");
             }
@@ -111,14 +119,15 @@ public final class Main {
         if (signal == null) {
             return strategy.touchConditionMet(minutes, halfHours, hours, now, multiplier);
         }
-        if (signal.key().equals(state.read("processedSetup", ""))) return false;
-        if (!signal.key().equals(state.read("pendingReplacementSetup", ""))) {
-            state.write("pendingReplacementUsed", "false");
-        }
+        if (signal.setupStart() == processedSetupStart(state)) return false;
         // if (!relativeStrength.allows(signal)) {
         //     System.out.println("🗣️ Relative-strength rejected setup; no STOP ORDER submitted.");
         //     return;
         // }
+        // Reserve this 30-minute setup before sending the request so an ambiguous API response
+        // cannot cause a second order attempt for the same setup.
+        state.write("processedSetupStart", Long.toString(signal.setupStart()));
+        state.write("processedSetup", signal.key());
         String orderId = broker.createPendingOrder(signal,
                 MatchTrader.PendingOrderType.STOP, signal.entryLevel());
         state.write("pendingOrderId", orderId);
@@ -140,9 +149,7 @@ public final class Main {
                     StandardOpenOption.CREATE);
         }
         Set<String> synced = csvPositionIds(file);
-        Set<String> executed = stateIds(state, "executedPositionIds");
         for (ClosedTrade trade : broker.closedPositions(config.symbol())) {
-            if (!executed.contains(trade.id())) continue;
             if (!synced.add(trade.id())) continue;
             ZonedDateTime openTime = ZonedDateTime.ofInstant(
                     Instant.ofEpochMilli(trade.entryTime()), ZoneId.of("Asia/Kolkata"));
@@ -176,6 +183,36 @@ public final class Main {
         return ids;
     }
 
+    private static long processedSetupStart(LocalState state) throws IOException {
+        String setupStart = state.read("processedSetupStart", "");
+        if (!setupStart.isBlank()) {
+            try {
+                return Long.parseLong(setupStart);
+            } catch (NumberFormatException ignored) {
+                return Long.MIN_VALUE;
+            }
+        }
+        String legacyKey = state.read("processedSetup", "");
+        String[] fields = legacyKey.split(":");
+        if (fields.length >= 2) {
+            try {
+                return Long.parseLong(fields[1]);
+            } catch (NumberFormatException ignored) {
+                return Long.MIN_VALUE;
+            }
+        }
+        return Long.MIN_VALUE;
+    }
+
+    private static void markProcessedSetup(LocalState state, String signalKey) throws IOException {
+        if (signalKey == null || signalKey.isBlank()) return;
+        String[] fields = signalKey.split(":");
+        if (fields.length >= 2) {
+            state.write("processedSetupStart", fields[1]);
+        }
+        state.write("processedSetup", signalKey);
+    }
+
     private static void clearPendingOrder(LocalState state) throws IOException {
         state.write("pendingOrderId", "");
         state.write("pendingSetupEnd", "0");
@@ -192,17 +229,6 @@ public final class Main {
             }
         }
         if (ids.add(id)) state.write(key, String.join(",", ids));
-    }
-
-    private static Set<String> stateIds(LocalState state, String key) throws IOException {
-        Set<String> ids = new HashSet<>();
-        String value = state.read(key, "");
-        if (!value.isBlank()) {
-            for (String id : value.split(",")) {
-                if (!id.isBlank()) ids.add(id);
-            }
-        }
-        return ids;
     }
 
     static String formatIst(long timestamp) {

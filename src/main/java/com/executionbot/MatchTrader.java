@@ -77,6 +77,22 @@ final class MatchTrader {
         return ids;
     }
 
+    List<String> pendingOrderIds(String symbol) throws Exception {
+        JsonNode root = request("trading-edge", "GET", "/pending-orders", null);
+        JsonNode orders = root.isArray() ? root : firstArray(root,
+                "pendingOrders", "orders", "data");
+        if (orders == null) {
+            throw new IOException("MatchTrader pending-orders response did not contain an order list");
+        }
+        List<String> ids = new ArrayList<>();
+        for (JsonNode order : orders) {
+            if (!symbol.equals(text(order, "symbol", "instrument"))) continue;
+            String id = text(order, "id", "orderId");
+            if (!id.isBlank()) ids.add(id);
+        }
+        return ids;
+    }
+
     boolean pendingOrderExists(String orderId) throws Exception {
         if (orderId == null || orderId.isBlank()) return false;
         try {
