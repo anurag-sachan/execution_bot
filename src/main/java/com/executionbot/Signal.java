@@ -13,7 +13,3 @@ record Signal(Side side, long setupStart, long touchTime, long entryTime,
         return ZonedDateTime.parse(Main.formatIst(entryTime)).toString();
     }
 }
-
-enum Side {
-    LONG, SHORT
-}

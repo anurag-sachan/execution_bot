@@ -15,8 +15,9 @@ import java.util.Set;
 
 final class Strategy {
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
-    private static final double LONG_LEVEL_OFFSET = 90;
-    private static final double SHORT_LEVEL_OFFSET = 110;
+    static final double LONG_LEVEL_OFFSET = 90;
+    static final double SHORT_LEVEL_OFFSET = 90;
+    static final double THIRTY_MINUTE_LEVEL_OFFSET = 370;
     private static final long MARKET_DATA_STALE_MILLIS = 60 * 60_000L;
     private static final SetOfDays BEST_DAYS = new SetOfDays();
     private static final DateTimeFormatter DATE_FORMAT =
@@ -96,8 +97,10 @@ final class Strategy {
         report.append(String.format(Locale.ROOT,
                 "SHORT ↓ 1H_entry_level=%.2f 30m_touch_level=%.2f%n"
                         + "LONG  ↑ 1H_entry_level=%.2f 30m_touch_level=%.2f%n",
-                hour.open() + SHORT_LEVEL_OFFSET * multiplier, previous.low() + 360,
-                hour.open() - LONG_LEVEL_OFFSET * multiplier, previous.high() - 360));
+                hour.open() + SHORT_LEVEL_OFFSET * multiplier,
+                previous.low() + THIRTY_MINUTE_LEVEL_OFFSET,
+                hour.open() - LONG_LEVEL_OFFSET * multiplier,
+                previous.high() - THIRTY_MINUTE_LEVEL_OFFSET));
         report.append("---------------\n");
         for (Side side : Side.values()) {
             Rule rule = rule(side, windowTime);
@@ -133,7 +136,8 @@ final class Strategy {
                 config.spreadPoints(),
                 avoidance.isEmpty() ? "" : "\n⏺ AVOID: " + avoidance));
             }
-        System.out.println("multiplier: "+multiplier+"| UP: "+SHORT_LEVEL_OFFSET * multiplier+" DOWN: "+LONG_LEVEL_OFFSET * multiplier);
+        System.out.println("multiplier: " + multiplier + "| UP: "
+                + LONG_LEVEL_OFFSET * multiplier + " DOWN: " + SHORT_LEVEL_OFFSET * multiplier);
         return report.toString();
     }
 
@@ -142,8 +146,8 @@ final class Strategy {
         if (openPositionSide != null) {
             return "⚪️ OPEN POSITION : " + openPositionSide + "\n";
         }
-        double longTouch = previous.high() - 360;
-        double shortTouch = previous.low() + 360;
+        double longTouch = previous.high() - THIRTY_MINUTE_LEVEL_OFFSET;
+        double shortTouch = previous.low() + THIRTY_MINUTE_LEVEL_OFFSET;
         double longEntry = hour.open() - LONG_LEVEL_OFFSET * multiplier;
         double shortEntry = hour.open() + SHORT_LEVEL_OFFSET * multiplier;
         Candle longTouchCandle = null;
@@ -191,9 +195,11 @@ final class Strategy {
         }
         List<Signal> candidates = new ArrayList<>();
         addCandidate(candidates, Side.LONG, setupStart, setupEnd,
-                previous.high() - 360, hour.open() - LONG_LEVEL_OFFSET * multiplier, minutes);
+                previous.high() - THIRTY_MINUTE_LEVEL_OFFSET,
+                hour.open() - LONG_LEVEL_OFFSET * multiplier, minutes);
         addCandidate(candidates, Side.SHORT, setupStart, setupEnd,
-                previous.low() + 360, hour.open() + SHORT_LEVEL_OFFSET * multiplier, minutes);
+                previous.low() + THIRTY_MINUTE_LEVEL_OFFSET,
+                hour.open() + SHORT_LEVEL_OFFSET * multiplier, minutes);
         return candidates.stream().filter(s -> s.entryTime() <= closedMinute)
                 .max(java.util.Comparator.comparingLong(Signal::entryTime)).orElse(null);
     }
@@ -209,13 +215,13 @@ final class Strategy {
         if (hour == null) return null;
 
         List<Signal> candidates = new ArrayList<>();
-        double longTouchLevel = previous.high() - 360;
+        double longTouchLevel = previous.high() - THIRTY_MINUTE_LEVEL_OFFSET;
         double longEntryLevel = hour.open() - LONG_LEVEL_OFFSET * multiplier;
         if (longTouchLevel < longEntryLevel) {
             addPendingCandidate(candidates, Side.LONG, setup, longTouchLevel,
                     longEntryLevel, minutes);
         }
-        double shortTouchLevel = previous.low() + 360;
+        double shortTouchLevel = previous.low() + THIRTY_MINUTE_LEVEL_OFFSET;
         double shortEntryLevel = hour.open() + SHORT_LEVEL_OFFSET * multiplier;
         if (shortTouchLevel > shortEntryLevel) {
             addPendingCandidate(candidates, Side.SHORT, setup, shortTouchLevel,
@@ -234,9 +240,9 @@ final class Strategy {
         long hourStart = Math.floorDiv(setup.openTime(), 3_600_000L) * 3_600_000L;
         Candle hour = hours.stream().filter(c -> c.openTime() == hourStart).findFirst().orElse(null);
         if (hour == null) return false;
-        double longTouch = previous.high() - 360;
+        double longTouch = previous.high() - THIRTY_MINUTE_LEVEL_OFFSET;
         double longEntry = hour.open() - LONG_LEVEL_OFFSET * multiplier;
-        double shortTouch = previous.low() + 360;
+        double shortTouch = previous.low() + THIRTY_MINUTE_LEVEL_OFFSET;
         double shortEntry = hour.open() + SHORT_LEVEL_OFFSET * multiplier;
         for (Candle candle : minutes) {
             if (candle.openTime() < setup.openTime()) continue;

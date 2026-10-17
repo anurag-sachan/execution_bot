@@ -62,8 +62,12 @@ final class RelativeStrengthFilter {
         if (hour == null) {
             return String.format(Locale.ROOT, "%s RS : +0.000000%n", side);
         }
-        double touch = side == Side.LONG ? previous.high() - 360 : previous.low() + 360;
-        double entry = side == Side.LONG ? hour.open() - 90 : hour.open() + 110;
+        double touch = side == Side.LONG
+                ? previous.high() - Strategy.THIRTY_MINUTE_LEVEL_OFFSET
+                : previous.low() + Strategy.THIRTY_MINUTE_LEVEL_OFFSET;
+        double entry = side == Side.LONG
+                ? hour.open() - Strategy.LONG_LEVEL_OFFSET
+                : hour.open() + Strategy.SHORT_LEVEL_OFFSET;
         if (side == Side.LONG ? touch >= entry : touch <= entry) {
             return String.format(Locale.ROOT, "%s RS : +0.000000 %n", side);
         }
